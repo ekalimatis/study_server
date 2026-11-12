@@ -1,0 +1,25 @@
+.git
+.github
+.gitignore
+.gitattributes
+.env
+.env.*
+__pycache__
+*.py[cod]
+.venv
+venv
+*.log
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+docker-compose.yml
+docker-compose.prod.yml
+Caddyfile
+README.md
+caddy_data
+caddy_config
+
+# Курсы не включаются в образ; в Docker они подключаются volume.
+COURSE/*
+!COURSE/.gitkeep

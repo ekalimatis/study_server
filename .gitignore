@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Курсы не входят в репозиторий сервера.
+# Файл .gitkeep нужен, чтобы пустая папка COURSE сохранялась в Git.
+COURSE/*
+!COURSE/.gitkeep
+
+caddy_data/
+caddy_config/
