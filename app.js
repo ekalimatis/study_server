@@ -242,10 +242,11 @@
         let html = '<span class="breadcrumb">';
         parts.forEach((part, index) => {
             const isLast = index === parts.length - 1;
+            const text = escapeHtml(part.text);
             if (part.click && !isLast) {
-                html += `<span class="crumb clickable" data-index="${index}">${part.text}</span>`;
+                html += `<span class="crumb clickable" data-index="${index}">${text}</span>`;
             } else {
-                html += `<span class="crumb ${isLast ? 'current' : ''}">${part.text}</span>`;
+                html += `<span class="crumb ${isLast ? 'current' : ''}">${text}</span>`;
             }
             if (!isLast) {
                 html += '<span class="sep"> → </span>';
@@ -326,7 +327,7 @@
             });
         }
         const topics = dayTopics[courseId] || {};
-        document.getElementById('sidebarTitle').innerHTML = `<i class="fas fa-book-open"></i> ${course.title}`;
+        document.getElementById('sidebarTitle').innerHTML = `<i class="fas fa-book-open"></i> ${escapeHtml(course.title)}`;
         const days = course.days || [];
         const isDayTab = activeTab === 'theory' || activeTab === 'practice';
         let html = '';
@@ -349,10 +350,10 @@
                     <span class="day-name"><i class="far fa-calendar-alt"></i> День ${d}</span>
                     ${topic ? `<div class="day-topic">${topic}</div>` : ''}
                     <div class="day-actions">
-                        <a href="#" class="theory-link ${theoryActive ? 'active' : ''}" data-course="${courseId}" data-day="${d}">
+                        <a href="#" class="theory-link ${theoryActive ? 'active' : ''}" data-course="${escapeHtml(courseId)}" data-day="${d}">
                             <i class="fas fa-book-open"></i> Теория
                         </a>
-                        <a href="#" class="practice-link ${practiceActive ? 'active' : ''}" data-course="${courseId}" data-day="${d}">
+                        <a href="#" class="practice-link ${practiceActive ? 'active' : ''}" data-course="${escapeHtml(courseId)}" data-day="${d}">
                             <i class="fas fa-laptop-code"></i> Практика
                         </a>
                     </div>
@@ -559,9 +560,9 @@
         for (const course of courses) {
             const active = currentCourse === course.id ? 'active' : '';
             html += `
-                <div class="course-card ${active}" data-course="${course.id}">
-                    <h3><i class="fas fa-folder"></i> ${course.title}</h3>
-                    <p>${course.description || 'Описание отсутствует'}</p>
+                <div class="course-card ${active}" data-course="${escapeHtml(course.id)}">
+                    <h3><i class="fas fa-folder"></i> ${escapeHtml(course.title)}</h3>
+                    <p>${escapeHtml(course.description || 'Описание отсутствует')}</p>
                     <span class="days-badge"><i class="far fa-calendar-alt"></i> ${course.days.length} ${pluralDays(course.days.length)}</span>
                 </div>
             `;

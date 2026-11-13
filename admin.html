@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>Админ-режим — Учебный сервер</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-body">
+<div class="admin-shell">
+    <header class="admin-header">
+        <div>
+            <h1>Админ-режим</h1>
+            <p class="admin-muted">Создание и изменение курсов через диалог с моделью</p>
+        </div>
+        <div class="admin-header-actions">
+            <a href="/" class="admin-link">К курсам</a>
+            <button id="logoutBtn" type="button" class="admin-btn hidden">Выйти</button>
+        </div>
+    </header>
+
+    <section id="loginView" class="admin-card admin-login">
+        <h2>Вход</h2>
+        <p class="admin-muted">Введите пароль администратора. Пароль проверяется на сервере.</p>
+        <form id="loginForm" class="admin-form">
+            <label class="admin-label">Пароль
+                <input id="passwordInput" type="password" class="admin-input" autocomplete="current-password" required>
+            </label>
+            <button type="submit" class="admin-btn primary">Войти</button>
+            <div id="loginStatus" class="admin-status"></div>
+        </form>
+    </section>
+
+    <section id="adminView" class="hidden">
+        <div class="admin-grid">
+            <aside class="admin-card admin-sidebar">
+                <div class="admin-sidebar-head">
+                    <h2>Курсы</h2>
+                    <button id="refreshCoursesBtn" type="button" class="admin-btn mini">Обновить</button>
+                </div>
+                <div id="courseList" class="admin-course-list"></div>
+                <div class="admin-context">
+                    <label class="admin-label">Контекст курса
+                        <select id="contextCourse" class="admin-input">
+                            <option value="">Не указан</option>
+                        </select>
+                    </label>
+                    <label class="admin-label">День (необязательно)
+                        <input id="contextDay" type="number" min="1" max="365" class="admin-input" placeholder="например 1">
+                    </label>
+                </div>
+            </aside>
+
+            <main class="admin-main">
+                <section class="admin-card admin-chat-card">
+                    <details id="settingsBlock" class="admin-settings">
+                        <summary>Настройки доступа к модели</summary>
+                        <p class="admin-muted">
+                            Настройки хранятся только в этом браузере (localStorage) и не сохраняются на сервере.
+                            Они передаются на сервер в каждом запросе.
+                        </p>
+                        <div class="admin-settings-grid">
+                            <label class="admin-label">Провайдер
+                                <select id="cfgProvider" class="admin-input">
+                                    <option value="ollama">Ollama (локальная)</option>
+                                    <option value="openai">OpenAI-совместимый API</option>
+                                </select>
+                            </label>
+                            <label class="admin-label">Base URL
+                                <input id="cfgBaseUrl" class="admin-input" placeholder="http://127.0.0.1:11434">
+                            </label>
+                            <label class="admin-label">Модель
+                                <input id="cfgModel" class="admin-input" list="modelOptions" placeholder="llama3.1">
+                                <datalist id="modelOptions"></datalist>
+                            </label>
+                            <label class="admin-label">API-ключ (необязательно)
+                                <input id="cfgApiKey" type="password" class="admin-input" autocomplete="off" placeholder="хранится в браузере">
+                            </label>
+                            <label class="admin-label">Temperature (0–2)
+                                <input id="cfgTemperature" type="number" min="0" max="2" step="0.1" class="admin-input">
+                            </label>
+                            <label class="admin-label">Top-p (0–1)
+                                <input id="cfgTopP" type="number" min="0" max="1" step="0.05" class="admin-input">
+                            </label>
+                            <label class="admin-label">num_ctx / max_tokens
+                                <input id="cfgNumCtx" type="number" min="256" max="131072" step="256" class="admin-input">
+                            </label>
+                            <label class="admin-label admin-wide">Системный промпт
+                                <textarea id="cfgSystemPrompt" class="admin-input admin-textarea" rows="6"></textarea>
+                            </label>
+                        </div>
+                        <div class="admin-row">
+                            <button id="saveSettingsBtn" type="button" class="admin-btn">Сохранить настройки</button>
+                            <button id="testConnectionBtn" type="button" class="admin-btn">Проверить подключение</button>
+                            <span id="settingsStatus" class="admin-status"></span>
+                        </div>
+                    </details>
+                    <div class="admin-chat-head">
+                        <h2>Диалог с моделью</h2>
+                        <span id="guardBadge" class="admin-badge hidden"></span>
+                    </div>
+                    <div id="chatMessages" class="admin-chat-messages">
+                        <div class="admin-empty">Опишите задачу: например, «Создай курс по PostgreSQL на 3 дня».</div>
+                    </div>
+                    <form id="chatForm" class="admin-chat-form">
+                        <textarea id="chatInput" class="admin-input admin-textarea" rows="3" placeholder="Опишите, какой курс или учебный день нужно создать или изменить. Ctrl+Enter — отправить."></textarea>
+                        <button id="sendBtn" type="submit" class="admin-btn primary">Отправить</button>
+                    </form>
+                    <div id="chatStatus" class="admin-status"></div>
+                </section>
+
+                <section id="changesCard" class="admin-card hidden">
+                    <div class="admin-chat-head">
+                        <h2>Предпросмотр изменений</h2>
+                        <button id="applyAllBtn" type="button" class="admin-btn primary">Применить все</button>
+                    </div>
+                    <p class="admin-muted">Файлы будут записаны в папку COURSE. Проверьте содержимое перед применением.</p>
+                    <div id="changesList" class="admin-changes"></div>
+                    <div id="applyStatus" class="admin-status"></div>
+                </section>
+            </main>
+        </div>
+    </section>
+</div>
+<script src="admin.js"></script>
+</body>
+</html>

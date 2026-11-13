@@ -761,6 +761,8 @@ body.dark .quiz-error { color: #fca5a5; }
 .nav-links a:hover { background: var(--button-hover); }
 .nav-links a.primary { background: var(--primary); color: var(--text-on-accent); }
 .nav-links a.primary:hover { background: var(--primary-hover); }
+.nav-links a.admin { background: var(--button-bg); color: var(--text-heading); }
+.nav-links a.admin:hover { background: var(--button-hover); }
 
 /* ===== Хлебные крошки ===== */
 .breadcrumb {
