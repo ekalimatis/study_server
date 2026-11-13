@@ -13,12 +13,53 @@
     const layout = document.getElementById('layout');
     const collapseBtn = document.getElementById('collapseBtn');
     const expandBtn = document.getElementById('expandBtn');
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+    const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+    const mobileQuery = window.matchMedia
+        ? window.matchMedia('(max-width: 768px)')
+        : { matches: window.innerWidth <= 768 };
 
     let currentCourse = null;
     let currentDay = null;
     let currentTab = null; // 'plan' | 'theory' | 'practice' | 'materials'
     let coursesData = [];
     let dayTopics = {}; // courseId -> { dayNum: тема }
+    let initialDrawerShown = false;
+
+    function isMobileViewport() {
+        return mobileQuery.matches;
+    }
+
+    function openSidebar(focus) {
+        if (!isMobileViewport()) return;
+        sidebar.classList.add('open');
+        if (sidebarBackdrop) sidebarBackdrop.classList.add('open');
+        document.body.classList.add('drawer-open');
+        if (mobileMenuBtn) {
+            mobileMenuBtn.setAttribute('aria-expanded', 'true');
+            mobileMenuBtn.setAttribute('aria-label', 'Закрыть список курсов');
+        }
+        if (focus && collapseBtn) collapseBtn.focus({ preventScroll: true });
+    }
+
+    function closeSidebar(restoreFocus) {
+        sidebar.classList.remove('open');
+        if (sidebarBackdrop) sidebarBackdrop.classList.remove('open');
+        document.body.classList.remove('drawer-open');
+        if (mobileMenuBtn) {
+            mobileMenuBtn.setAttribute('aria-expanded', 'false');
+            mobileMenuBtn.setAttribute('aria-label', 'Открыть список курсов');
+        }
+        if (restoreFocus && isMobileViewport() && mobileMenuBtn) {
+            mobileMenuBtn.focus({ preventScroll: true });
+        }
+    }
+
+    function scrollViewerIntoView() {
+        if (!isMobileViewport()) return;
+        const viewerEl = document.getElementById('viewer');
+        if (viewerEl) viewerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 
     // --- Вспомогательные функции ---
     function getCourseTitle(courseId) {
@@ -204,6 +245,13 @@
         updateStepFromQuizzes(quiz);
     }
 
+    // --- Горизонтальная прокрутка таблиц на узких экранах ---
+    function wrapTables(html) {
+        html = html.replace(/<table(\s[^>]*)?>/gi, '<div class="table-wrap"><table$1>');
+        html = html.replace(/<\/table>/gi, '</table></div>');
+        return html;
+    }
+
     // --- Рендеринг Markdown с поддержкой блоков {info}/{note}/{warning}/{tip} ---
     function renderMarkdown(markdown) {
         const quizzes = [];
@@ -233,7 +281,7 @@
         html = html.replace(/<p>@@QUIZ_(\d+)@@<\/p>/g, insertQuiz);
         html = html.replace(/@@QUIZ_(\d+)@@/g, insertQuiz);
 
-        return html;
+        return wrapTables(html);
     }
 
     // --- Обновление хлебных крошек ---
@@ -450,6 +498,7 @@
 
     // --- Загрузка дополнительных материалов курса ---
     function loadMaterials(courseId) {
+        closeSidebar();
         fetch(`COURSE/${courseId}/materials.md`)
             .then(res => {
                 if (!res.ok) throw new Error('materials.md не найден');
@@ -499,6 +548,7 @@
         placeholder.innerHTML = '<i class="fas fa-file-alt"></i><p>Выберите курс из списка слева.</p>';
         rendered.style.display = 'none';
         document.querySelectorAll('.course-card').forEach(c => c.classList.remove('active'));
+        if (isMobileViewport()) openSidebar(true);
     });
 
     // --- Вспомогательная функция для вставки навигационных кнопок ---
@@ -541,6 +591,10 @@
             .then(courses => {
                 coursesData = courses;
                 showCourseList();
+                if (isMobileViewport() && !currentCourse && !initialDrawerShown) {
+                    initialDrawerShown = true;
+                    openSidebar(false);
+                }
             })
             .catch(err => {
                 courseListEl.innerHTML = `<div style="padding:1rem; text-align:center; color:#dc2626;">
@@ -579,6 +633,7 @@
     // --- Выбор курса ---
     function selectCourse(courseId) {
         currentCourse = courseId;
+        closeSidebar();
         showCoursePlan(courseId);
         document.querySelectorAll('.course-card').forEach(c => c.classList.remove('active'));
         const activeCard = document.querySelector(`.course-card[data-course="${courseId}"]`);
@@ -594,6 +649,7 @@
                 renderMain(markdown, courseId);
                 insertNavButtons();
                 showCoursePlan(courseId); // обновим хлебные крошки после рендера
+                scrollViewerIntoView();
             })
             .catch(err => {
                 placeholder.style.display = 'block';
@@ -664,6 +720,7 @@
 
     // --- Загрузка теории ---
     function loadTheory(courseId, day) {
+        closeSidebar();
         fetch(`COURSE/${courseId}/day${day}_theory.md`)
             .then(res => {
                 if (!res.ok) throw new Error(`Теория дня ${day} не найдена`);
@@ -694,6 +751,7 @@
 
     // --- Загрузка практики ---
     function loadPractice(courseId, day) {
+        closeSidebar();
         fetch(`COURSE/${courseId}/day${day}_practice.md`)
             .then(res => {
                 if (!res.ok) throw new Error(`Практика дня ${day} не найдена`);
@@ -857,9 +915,17 @@
         } catch (e) {}
     }
     collapseBtn.addEventListener('click', function() {
+        if (isMobileViewport()) {
+            closeSidebar(true);
+            return;
+        }
         setSidebarCollapsed(true);
     });
     expandBtn.addEventListener('click', function() {
+        if (isMobileViewport()) {
+            openSidebar(true);
+            return;
+        }
         setSidebarCollapsed(false);
     });
     try {
@@ -867,6 +933,35 @@
             layout.classList.add('collapsed');
         }
     } catch (e) {}
+
+    // --- Мобильная панель курсов ---
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener('click', function() {
+            if (sidebar.classList.contains('open')) {
+                closeSidebar(true);
+            } else {
+                openSidebar(true);
+            }
+        });
+    }
+    if (sidebarBackdrop) {
+        sidebarBackdrop.addEventListener('click', function() {
+            closeSidebar(true);
+        });
+    }
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && sidebar.classList.contains('open')) {
+            closeSidebar(true);
+        }
+    });
+    function handleMobileQueryChange(event) {
+        if (!event.matches) closeSidebar(false);
+    }
+    if (typeof mobileQuery.addEventListener === 'function') {
+        mobileQuery.addEventListener('change', handleMobileQueryChange);
+    } else if (typeof mobileQuery.addListener === 'function') {
+        mobileQuery.addListener(handleMobileQueryChange);
+    }
 
     // --- Переключение темы ---
     const themeToggle = document.getElementById('themeToggle');

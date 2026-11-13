@@ -487,3 +487,69 @@ body.dark .admin-badge.err {
 body.dark .admin-change.applied {
     border-color: #4ade80;
 }
+
+@media (max-width: 640px) {
+    body.admin-body {
+        padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+    }
+
+    .admin-header {
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .admin-header h1 {
+        font-size: 1.5rem;
+        line-height: 1.2;
+    }
+
+    .admin-header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .admin-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .admin-link,
+    .admin-btn {
+        min-height: 2.75rem;
+    }
+
+    .admin-card {
+        padding: 1rem 0.9rem;
+        border-radius: 1rem;
+    }
+
+    .admin-login { margin: 1.5rem auto 0; }
+    .admin-grid { gap: 1rem; }
+    .admin-settings-grid { gap: 0.75rem; }
+
+    .admin-input {
+        min-height: 2.75rem;
+        font-size: 16px;
+    }
+
+    .admin-textarea { min-height: 6rem; }
+
+    .admin-course-list { max-height: 40dvh; }
+    .admin-chat-messages {
+        max-height: 50dvh;
+        padding: 0.35rem;
+    }
+
+    .admin-chat-head {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .admin-chat-badges { justify-content: flex-start; }
+    .admin-chat-form { gap: 0.6rem; }
+    .admin-chat-form .admin-btn { width: 100%; }
+    .admin-row { gap: 0.5rem; }
+    .admin-change pre { max-height: 40dvh; }
+}
