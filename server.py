@@ -24,6 +24,7 @@ BACKUP_DIR = os.path.join(COURSE_DIR, '.backups')
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 ADMIN_LOG = os.path.join(LOG_DIR, 'admin.log')
 ENV_FILE = os.path.join(BASE_DIR, '.env')
+PROMPT_FILE = os.path.join(BASE_DIR, 'system_prompt.txt')
 
 
 def load_env_file(path):
@@ -70,7 +71,7 @@ BLOCKED_NAMES = {
 }
 
 CACHEABLE_SUFFIXES = (
-    '.html', '.js', '.css', '.md', '.json', '.svg', '.png', '.jpg',
+    '.html', '.js', '.css', '.md', '.json', '.txt', '.svg', '.png', '.jpg',
     '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf',
 )
 
@@ -113,57 +114,27 @@ GUARD_SYSTEM_PROMPT = """Ты — контрольный фильтр безоп
 Оценивай текущий запрос вместе с предыдущими сообщениями диалога: уточнение параметров уже начатого запроса на создание или изменение курса или дня разрешено. Если общая цель диалога иная — запрещай.
 Ответ — строго JSON без markdown: {"allowed": true, "reason": "кратко"} или {"allowed": false, "reason": "кратко"}."""
 
-DEFAULT_TARGET_SYSTEM_PROMPT = (
-    "Ты — методист и автор учебных курсов для учебного сервера. Твоя задача — "
-    "помогать администратору создавать и изменять курсы и учебные дни. Пиши "
-    "материалы на русском языке, структурированно, с примерами и практическими "
-    "заданиями. Не выполняй посторонние задачи."
+FALLBACK_TARGET_SYSTEM_PROMPT = (
+    "Ты — старший методист и технический автор учебных курсов для учебного сервера. "
+    "Создавай и изменяй курсы и учебные дни в формате, который принимает сервер. "
+    "Не выполняй посторонние задачи."
 )
 
-PROTOCOL_PROMPT = """Формат ответа — строго один JSON-объект без markdown-обёртки и без текста вне JSON:
-{
-  "reply": "краткое сообщение администратору",
-  "changes": [
-    {
-      "op": "create_course",
-      "course_id": "LATIN_OR_DIGITS",
-      "title": "Название курса",
-      "description": "Краткое описание",
-      "main_md": "# Название курса\n\nОписание\n\n## План курса\n\n### День 1. Тема",
-      "days": [
-        {"day": 1, "topic": "Тема", "theory_md": "# Теория\n...", "practice_md": "# Практика\n..."}
-      ]
-    },
-    {
-      "op": "update_course",
-      "course_id": "COURSE_ID",
-      "main_md": "# Название курса\n..."
-    },
-    {
-      "op": "create_day",
-      "course_id": "COURSE_ID",
-      "day": 1,
-      "topic": "Тема",
-      "theory_md": "# Теория\n...",
-      "practice_md": "# Практика\n..."
-    },
-    {
-      "op": "update_day",
-      "course_id": "COURSE_ID",
-      "day": 1,
-      "topic": "Тема",
-      "theory_md": "# Теория\n...",
-      "practice_md": "# Практика\n..."
-    }
-  ]
-}
-Правила:
-- course_id: начинается с латинской буквы или цифры; далее латиница, цифры, пробел, дефис, подчёркивание; до 64 символов.
-- В main.md обязательно должен быть заголовок # Название и раздел ## План курса с заголовками ### День N. Тема.
-- theory_md и practice_md обязательны для каждого дня.
-- Не удаляй курсы и дни.
-- Если изменения не нужны, верни "changes": [].
-- Никакого текста вне JSON."""
+SERVER_PROTOCOL_REMINDER = """Обязательное требование сервера: ответ — строго один JSON-объект вида {"reply": "...", "changes": [...]} без текста вне JSON. Разрешены только операции create_course, update_course, create_day, update_day. Если изменения не нужны, верни пустой массив changes. Не удаляй и не переименовывай курсы и дни."""
+
+
+def load_default_target_prompt():
+    try:
+        with open(PROMPT_FILE, 'r', encoding='utf-8-sig') as file:
+            text = file.read().strip()
+        if text:
+            return text
+    except OSError:
+        pass
+    return FALLBACK_TARGET_SYSTEM_PROMPT
+
+
+DEFAULT_TARGET_SYSTEM_PROMPT = load_default_target_prompt()
 
 
 class ValidationError(Exception):
@@ -644,7 +615,7 @@ def normalize_context(raw):
     day = raw.get('day')
     result = {}
     if course_id not in (None, ''):
-        result['course_id'] = safe_course_id(course_id)
+        result['course_id'] = normalize_line(course_id, 'context.course_id', required=True, limit=128)
     if day not in (None, ''):
         result['day'] = safe_day_num(day)
     return result
@@ -852,6 +823,15 @@ def extract_content(data):
     return content
 
 
+def extract_finish_reason(data):
+    try:
+        choice = data['choices'][0]
+        reason = choice.get('finish_reason')
+        return reason if isinstance(reason, str) else None
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+
+
 def call_openai_chat(base_url, api_key, model, messages, temperature, top_p, max_tokens, timeout, json_mode=False):
     url = chat_completions_url(base_url)
     headers = {
@@ -910,7 +890,7 @@ def call_openai_chat(base_url, api_key, model, messages, temperature, top_p, max
         raise UpstreamError(short(str(error), 300))
 
     content = extract_content(data)
-    return content, data.get('usage')
+    return content, data.get('usage'), extract_finish_reason(data)
 
 
 def call_ollama_chat(base_url, model, messages, temperature, top_p, num_ctx, timeout):
@@ -956,12 +936,15 @@ def call_ollama_chat(base_url, model, messages, temperature, top_p, num_ctx, tim
     content = message.get('content') if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
         raise UpstreamError('Ollama вернула пустой ответ')
-    return content, None
+    finish_reason = data.get('done_reason')
+    if not isinstance(finish_reason, str):
+        finish_reason = None
+    return content, None, finish_reason
 
 
 def call_target_model(config, messages, context):
     system_prompt = config['system_prompt'] or DEFAULT_TARGET_SYSTEM_PROMPT
-    system_prompt += '\n\n' + PROTOCOL_PROMPT
+    system_prompt += '\n\n' + SERVER_PROTOCOL_REMINDER
     context_parts = []
     if context.get('course_id'):
         context_parts.append('курс: %s' % context['course_id'])
@@ -969,7 +952,12 @@ def call_target_model(config, messages, context):
         context_parts.append('день: %d' % context['day'])
     if context_parts:
         system_prompt += '\n\nТекущий контекст: ' + ', '.join(context_parts)
-    full_messages = [{'role': 'system', 'content': system_prompt}] + messages
+    target_messages = [dict(item) for item in messages]
+    if context_parts and target_messages and target_messages[-1]['role'] == 'user':
+        target_messages[-1]['content'] = (
+            '[Контекст: %s]\n\n%s' % (', '.join(context_parts), target_messages[-1]['content'])
+        )
+    full_messages = [{'role': 'system', 'content': system_prompt}] + target_messages
     if config['provider'] == 'ollama':
         return call_ollama_chat(
             config['base_url'],
@@ -1045,7 +1033,7 @@ def call_guard_model(messages, context):
     ]
     started = time.time()
     try:
-        content, _ = call_openai_chat(
+        content, _, _ = call_openai_chat(
             GUARD_BASE_URL,
             GUARD_API_KEY,
             GUARD_MODEL,
@@ -1060,6 +1048,7 @@ def call_guard_model(messages, context):
         log_event('guard', {
             'ok': False,
             'model': GUARD_MODEL,
+            'context': context,
             'duration_ms': int((time.time() - started) * 1000),
             'error': short(str(error), 300),
         })
@@ -1069,6 +1058,7 @@ def call_guard_model(messages, context):
         log_event('guard', {
             'ok': False,
             'model': GUARD_MODEL,
+            'context': context,
             'duration_ms': int((time.time() - started) * 1000),
             'error': 'invalid_response',
         })
@@ -1077,6 +1067,7 @@ def call_guard_model(messages, context):
     log_event('guard', {
         'ok': True,
         'model': GUARD_MODEL,
+        'context': context,
         'allowed': allowed,
         'reason': short(reason, 300),
         'duration_ms': int((time.time() - started) * 1000),
@@ -1084,40 +1075,190 @@ def call_guard_model(messages, context):
     return allowed, reason
 
 
+def repair_model_json(text):
+    out = []
+    in_string = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if not in_string:
+            if char == '"':
+                in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == '\\':
+            if index + 1 < length:
+                next_char = text[index + 1]
+                if next_char in '"\\/bfnrt':
+                    out.append(char)
+                    out.append(next_char)
+                    index += 2
+                    continue
+                if next_char == 'u' and index + 5 < length and all(
+                    c in '0123456789abcdefABCDEF' for c in text[index + 2:index + 6]
+                ):
+                    out.append(text[index:index + 6])
+                    index += 6
+                    continue
+            out.append('\\\\')
+            index += 1
+            continue
+        if char == '"':
+            lookahead = index + 1
+            while lookahead < length and text[lookahead] in ' \t\r\n':
+                lookahead += 1
+            if lookahead >= length or text[lookahead] in ',}]:':
+                out.append('"')
+                in_string = False
+                index += 1
+                continue
+            out.append('\\"')
+            index += 1
+            continue
+        if char == '\n':
+            out.append('\\n')
+        elif char == '\r':
+            out.append('\\r')
+        elif char == '\t':
+            out.append('\\t')
+        elif ord(char) < 0x20:
+            out.append('\\u%04x' % ord(char))
+        else:
+            out.append(char)
+        index += 1
+    return ''.join(out)
+
+
+def strip_trailing_commas(text):
+    out = []
+    in_string = False
+    escaped = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == ',':
+            lookahead = index + 1
+            while lookahead < length and text[lookahead] in ' \t\r\n':
+                lookahead += 1
+            if lookahead < length and text[lookahead] in '}]':
+                index += 1
+                continue
+        out.append(char)
+        index += 1
+    return ''.join(out)
+
+
+def extract_json_object(text):
+    start = text.find('{')
+    if start < 0:
+        return None, False
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1], False
+    return None, True
+
+
+def response_ends_with_json(text):
+    stripped = text.rstrip()
+    if stripped.endswith('```'):
+        stripped = stripped[:-3].rstrip()
+    return stripped.endswith('}')
+
+
 def parse_model_payload(content):
     text = str(content or '').strip()
     if not text:
         return {'reply': '', 'changes': [], 'parse_error': 'Пустой ответ модели'}
-    start = text.find('{')
-    end = text.rfind('}')
-    if start >= 0 and end > start:
-        try:
-            data = json.loads(text[start:end + 1])
-        except ValueError as error:
+    if text.find('{') < 0:
+        return {'reply': text, 'changes': [], 'parse_error': 'Модель не вернула JSON-объект с изменениями'}
+    if not response_ends_with_json(text):
+        return {
+            'reply': text,
+            'changes': [],
+            'parse_error': (
+                'Ответ модели оборван: JSON не закрыт. Уменьшите объём ответа '
+                '(меньше дней или короче материалы) либо увеличьте num_ctx/max_tokens.'
+            ),
+        }
+
+    repaired = strip_trailing_commas(repair_model_json(text[text.find('{'):]))
+    json_text, truncated = extract_json_object(repaired)
+    if json_text is None:
+        if truncated:
             return {
                 'reply': text,
                 'changes': [],
-                'parse_error': 'Ответ модели не является корректным JSON: ' + short(str(error), 200),
+                'parse_error': (
+                    'Ответ модели оборван: JSON не закрыт. Уменьшите объём ответа '
+                    '(меньше дней или короче материалы) либо увеличьте num_ctx/max_tokens.'
+                ),
             }
-        if isinstance(data, dict):
-            reply = data.get('reply')
-            if not isinstance(reply, str) or not reply.strip():
-                reply = text
-            changes = data.get('changes')
-            if changes is None:
-                changes = []
-            if not isinstance(changes, list):
-                return {
-                    'reply': reply,
-                    'changes': [],
-                    'parse_error': 'Поле changes в ответе модели должно быть массивом',
-                }
-            changes = [item for item in changes if isinstance(item, dict)]
-            return {'reply': reply, 'changes': changes, 'parse_error': None}
-        if isinstance(data, list):
-            changes = [item for item in data if isinstance(item, dict)]
-            return {'reply': text, 'changes': changes, 'parse_error': None}
+        return {'reply': text, 'changes': [], 'parse_error': 'Модель не вернула JSON-объект с изменениями'}
+
+    try:
+        data = json.loads(json_text)
+    except ValueError as error:
+        return {
+            'reply': text,
+            'changes': [],
+            'parse_error': (
+                'Ответ модели не является корректным JSON: ' + short(str(error), 200) +
+                '. Если ответ оборван, уменьшите объём или увеличьте num_ctx/max_tokens.'
+            ),
+        }
+    if isinstance(data, dict):
+        reply = data.get('reply')
+        if not isinstance(reply, str) or not reply.strip():
+            reply = text
+        changes = data.get('changes')
+        if changes is None:
+            changes = []
+        if not isinstance(changes, list):
+            return {
+                'reply': reply,
+                'changes': [],
+                'parse_error': 'Поле changes в ответе модели должно быть массивом',
+            }
+        changes = [item for item in changes if isinstance(item, dict)]
+        return {'reply': reply, 'changes': changes, 'parse_error': None}
     return {'reply': text, 'changes': [], 'parse_error': 'Модель не вернула JSON-объект с изменениями'}
+
 
 
 def list_target_models(config):
@@ -1428,22 +1569,37 @@ class CustomHandler(SimpleHTTPRequestHandler):
             return
         started = time.time()
         try:
-            content, usage = call_target_model(config, messages, context)
+            content, usage, finish_reason = call_target_model(config, messages, context)
         except UpstreamError as error:
             log_event('target', {
                 'ok': False,
                 'provider': config['provider'],
                 'model': config['model'],
+                'max_tokens': config['num_ctx'],
+                'context': context,
                 'duration_ms': int((time.time() - started) * 1000),
                 'error': short(str(error), 300),
             })
             raise UpstreamError('Целевая модель недоступна: ' + short(str(error), 300))
         parsed = parse_model_payload(content)
+        if finish_reason == 'length':
+            parsed = {
+                'reply': content,
+                'changes': [],
+                'parse_error': (
+                    'Ответ модели оборван по лимиту вывода. Уменьшите объём ответа '
+                    '(меньше дней или короче материалы) либо увеличьте num_ctx/max_tokens.'
+                ),
+            }
         log_event('target', {
             'ok': True,
             'provider': config['provider'],
             'model': config['model'],
+            'max_tokens': config['num_ctx'],
+            'completion_tokens': usage.get('completion_tokens') if isinstance(usage, dict) else None,
+            'context': context,
             'changes': len(parsed['changes']),
+            'finish_reason': finish_reason,
             'duration_ms': int((time.time() - started) * 1000),
         })
         self.send_json({
@@ -1453,6 +1609,8 @@ class CustomHandler(SimpleHTTPRequestHandler):
             'reply': parsed['reply'],
             'changes': parsed['changes'],
             'parse_error': parsed['parse_error'],
+            'finish_reason': finish_reason,
+            'context': context,
             'usage': usage,
         })
 

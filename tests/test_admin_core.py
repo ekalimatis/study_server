@@ -154,6 +154,103 @@ class ConfigTests(unittest.TestCase):
             server.normalize_messages([{'role': 'assistant', 'content': 'ответ'}])
 
 
+class JsonRepairTests(unittest.TestCase):
+    def test_repairs_unescaped_quotes_and_newlines(self):
+        raw = (
+            '{"reply":"ok","changes":[{"op":"create_day","course_id":"C","day":1,'
+            '"topic":"T","theory_md":"Код: print("hi")\nСтрока","practice_md":"# P"}]}'
+        )
+        result = server.parse_model_payload(raw)
+        self.assertIsNone(result['parse_error'])
+        self.assertEqual(len(result['changes']), 1)
+        self.assertEqual(result['changes'][0]['theory_md'], 'Код: print("hi")\nСтрока')
+
+    def test_keeps_valid_escaped_quotes(self):
+        raw = '{"reply":"Сказал \\"привет\\"","changes":[]}'
+        result = server.parse_model_payload(raw)
+        self.assertIsNone(result['parse_error'])
+        self.assertEqual(result['reply'], 'Сказал "привет"')
+
+    def test_removes_trailing_commas(self):
+        raw = (
+            '{"reply":"ok","changes":[{"op":"create_day","course_id":"C","day":1,'
+            '"topic":"T","theory_md":"# T","practice_md":"# P",},],}'
+        )
+        result = server.parse_model_payload(raw)
+        self.assertIsNone(result['parse_error'])
+        self.assertEqual(len(result['changes']), 1)
+
+    def test_reports_truncated_json(self):
+        raw = '{"reply":"ok","changes":[{"op":"create_course","course_id":"C","main_md":"# C\n...'
+        result = server.parse_model_payload(raw)
+        self.assertEqual(result['changes'], [])
+        self.assertIn('оборван', result['parse_error'])
+
+    def test_accepts_markdown_fence(self):
+        raw = '```json\n{"reply":"ok","changes":[]}\n```'
+        result = server.parse_model_payload(raw)
+        self.assertIsNone(result['parse_error'])
+        self.assertEqual(result['reply'], 'ok')
+
+
+class ContextTests(unittest.TestCase):
+    def test_context_accepts_display_course_id(self):
+        self.assertEqual(
+            server.normalize_context({'course_id': 'LLM arh', 'day': 1}),
+            {'course_id': 'LLM arh', 'day': 1},
+        )
+        self.assertEqual(
+            server.normalize_context({'course_id': 'Курс.1'}),
+            {'course_id': 'Курс.1'},
+        )
+
+    def test_context_is_added_to_target_messages(self):
+        captured = {}
+        original = server.call_openai_chat
+
+        def fake(base_url, api_key, model, messages, temperature, top_p, max_tokens, timeout, json_mode=False):
+            captured['messages'] = messages
+            return '{"reply":"ok","changes":[]}', None, 'stop'
+
+        server.call_openai_chat = fake
+        try:
+            config = server.normalize_target_config({
+                'provider': 'openai',
+                'base_url': 'http://127.0.0.1:1/v1',
+                'model': 'm',
+                'api_key': '',
+                'temperature': 0.2,
+                'top_p': 0.9,
+                'num_ctx': 1000,
+            })
+            server.call_target_model(
+                config,
+                [{'role': 'user', 'content': 'Создай день'}],
+                {'course_id': 'KAFKA', 'day': 2},
+            )
+        finally:
+            server.call_openai_chat = original
+
+        system_prompt = captured['messages'][0]['content']
+        user_message = captured['messages'][-1]['content']
+        self.assertIn('Текущий контекст: курс: KAFKA, день: 2', system_prompt)
+        self.assertIn('[Контекст: курс: KAFKA, день: 2]', user_message)
+        self.assertIn('Создай день', user_message)
+
+
+class SystemPromptTests(unittest.TestCase):
+    def test_default_prompt_is_loaded_and_corrected(self):
+        prompt = server.DEFAULT_TARGET_SYSTEM_PROMPT
+        self.assertIn('create_course', prompt)
+        self.assertIn('Ожидаемая структура ответа', prompt)
+        self.assertIn('"reply"', prompt)
+        self.assertIn('"changes"', prompt)
+        self.assertIn('не оставляй сырые кавычки', prompt)
+        self.assertIn('Самопроверка перед ответом', prompt)
+        self.assertIn('иначе будет конфликт', prompt)
+        self.assertNotIn('será', prompt)
+
+
 class PasswordTests(unittest.TestCase):
     def setUp(self):
         self.old_hash = server.ADMIN_PASSWORD_HASH

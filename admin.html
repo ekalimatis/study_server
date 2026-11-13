@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>Админ-режим — Учебный сервер</title>
-    <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/admin.css">
 </head>
 <body class="admin-body">
 <div class="admin-shell">
@@ -59,7 +59,8 @@
                         <summary>Настройки доступа к модели</summary>
                         <p class="admin-muted">
                             Настройки хранятся только в этом браузере (localStorage) и не сохраняются на сервере.
-                            Они передаются на сервер в каждом запросе.
+                            Они передаются на сервер в каждом запросе. Системный промпт по умолчанию
+                            загружается из <code>system_prompt.txt</code>.
                         </p>
                         <div class="admin-settings-grid">
                             <label class="admin-label">Провайдер
@@ -85,7 +86,7 @@
                                 <input id="cfgTopP" type="number" min="0" max="1" step="0.05" class="admin-input">
                             </label>
                             <label class="admin-label">num_ctx / max_tokens
-                                <input id="cfgNumCtx" type="number" min="256" max="131072" step="256" class="admin-input">
+                                <input id="cfgNumCtx" type="number" min="256" max="131072" step="256" class="admin-input" title="Для Ollama — размер контекста; для OpenAI-совместимого API — max_tokens. При обрыве ответа увеличьте значение.">
                             </label>
                             <label class="admin-label admin-wide">Системный промпт
                                 <textarea id="cfgSystemPrompt" class="admin-input admin-textarea" rows="6"></textarea>
@@ -99,7 +100,10 @@
                     </details>
                     <div class="admin-chat-head">
                         <h2>Диалог с моделью</h2>
-                        <span id="guardBadge" class="admin-badge hidden"></span>
+                        <div class="admin-chat-badges">
+                            <span id="contextBadge" class="admin-badge neutral hidden"></span>
+                            <span id="guardBadge" class="admin-badge hidden"></span>
+                        </div>
                     </div>
                     <div id="chatMessages" class="admin-chat-messages">
                         <div class="admin-empty">Опишите задачу: например, «Создай курс по PostgreSQL на 3 дня».</div>
@@ -124,6 +128,6 @@
         </div>
     </section>
 </div>
-<script src="admin.js"></script>
+<script src="/admin.js"></script>
 </body>
 </html>

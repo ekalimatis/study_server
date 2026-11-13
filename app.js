@@ -728,9 +728,12 @@
                         let index = 1;
                         while ((match = regex.exec(markdown)) !== null) {
                             const content = match[1].trim();
-                            const titleMatch = content.match(/^##\s*(.+)/);
-                            const title = titleMatch ? titleMatch[1] : `Шаг ${index}`;
-                            const renderedContent = renderMarkdown(content);
+                            const lines = content.split('\n');
+                            let title = `Шаг ${index}`;
+                            if (lines.length && /^#{2,3}\s+/.test(lines[0])) {
+                                title = lines.shift().replace(/^#{2,3}\s+/, '').trim();
+                            }
+                            const renderedContent = renderMarkdown(lines.join('\n').trim());
                             steps.push({ num: index, title, content: renderedContent });
                             index++;
                         }

@@ -4,10 +4,15 @@
     const SETTINGS_KEY = 'studyAdminModelSettings';
     const THEME_KEY = 'theme';
 
-    const DEFAULT_SYSTEM_PROMPT = 'Ты — методист и автор учебных курсов для учебного сервера. ' +
-        'Помогай администратору создавать и изменять курсы и учебные дни. ' +
-        'Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями. ' +
+    const DEFAULT_SYSTEM_PROMPT = 'Ты — старший методист и технический автор учебных курсов для учебного сервера. ' +
+        'Создавай и изменяй курсы и учебные дни в формате, который принимает сервер. ' +
         'Не выполняй посторонние задачи.';
+
+    const LEGACY_SYSTEM_PROMPTS = [
+        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями. Не выполняй посторонние задачи.',
+        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями.Не выполняй посторонние задачи.',
+        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями.'
+    ];
 
     const DEFAULTS = {
         provider: 'ollama',
@@ -51,6 +56,7 @@
     const chatStatus = document.getElementById('chatStatus');
     const sendBtn = document.getElementById('sendBtn');
     const guardBadge = document.getElementById('guardBadge');
+    const contextBadge = document.getElementById('contextBadge');
 
     const changesCard = document.getElementById('changesCard');
     const changesList = document.getElementById('changesList');
@@ -93,6 +99,18 @@
         }
         if (theme === 'dark' || (theme === null && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.body.classList.add('dark');
+        }
+    }
+
+    async function loadDefaultSystemPrompt() {
+        try {
+            const response = await fetch('/system_prompt.txt?ts=' + Date.now(), { cache: 'no-store' });
+            if (!response.ok) return null;
+            const text = await response.text();
+            const prompt = text.replace(/^\uFEFF/, '').trim();
+            return prompt || null;
+        } catch (error) {
+            return null;
         }
     }
 
@@ -192,11 +210,18 @@
         chatMessages.appendChild(create('div', 'admin-empty', 'Опишите задачу: например, «Создай курс по PostgreSQL на 3 дня».'));
         hideChanges();
         setGuardBadge(null);
+        setContextBadge(null);
         showLogin('');
     }
 
-    function loadSettings() {
-        let settings = Object.assign({}, DEFAULTS);
+    function loadSettings(defaultPrompt) {
+        const promptDefault = defaultPrompt === undefined
+            ? DEFAULTS.system_prompt
+            : (typeof defaultPrompt === 'string' ? defaultPrompt : '');
+        const defaults = Object.assign({}, DEFAULTS, {
+            system_prompt: promptDefault
+        });
+        let settings = Object.assign({}, defaults);
         try {
             const raw = localStorage.getItem(SETTINGS_KEY);
             if (raw) {
@@ -206,16 +231,20 @@
                 }
             }
         } catch (error) {
-            settings = Object.assign({}, DEFAULTS);
+            settings = Object.assign({}, defaults);
         }
         cfgProvider.value = settings.provider === 'openai' ? 'openai' : 'ollama';
-        cfgBaseUrl.value = settings.base_url || DEFAULTS.base_url;
-        cfgModel.value = settings.model || DEFAULTS.model;
+        cfgBaseUrl.value = settings.base_url || defaults.base_url;
+        cfgModel.value = settings.model || defaults.model;
         cfgApiKey.value = settings.api_key || '';
-        cfgTemperature.value = settings.temperature != null ? settings.temperature : DEFAULTS.temperature;
-        cfgTopP.value = settings.top_p != null ? settings.top_p : DEFAULTS.top_p;
-        cfgNumCtx.value = settings.num_ctx != null ? settings.num_ctx : DEFAULTS.num_ctx;
-        cfgSystemPrompt.value = settings.system_prompt || DEFAULT_SYSTEM_PROMPT;
+        cfgTemperature.value = settings.temperature != null ? settings.temperature : defaults.temperature;
+        cfgTopP.value = settings.top_p != null ? settings.top_p : defaults.top_p;
+        cfgNumCtx.value = settings.num_ctx != null ? settings.num_ctx : defaults.num_ctx;
+        const savedPrompt = typeof settings.system_prompt === 'string' ? settings.system_prompt.trim() : '';
+        if (!savedPrompt || LEGACY_SYSTEM_PROMPTS.indexOf(savedPrompt) !== -1) {
+            settings.system_prompt = defaults.system_prompt;
+        }
+        cfgSystemPrompt.value = settings.system_prompt;
         updateProviderUi();
     }
 
@@ -337,6 +366,7 @@
         } else if (currentCourse && !courses.some(function (course) { return course.id === currentCourse; })) {
             currentCourse = '';
         }
+        setContextBadge(getContext());
     }
 
     function selectContextCourse(courseId) {
@@ -345,6 +375,7 @@
         document.querySelectorAll('.admin-course').forEach(function (element) {
             element.classList.toggle('active', element.dataset.course === currentCourse);
         });
+        setContextBadge(getContext());
     }
 
     function getContext() {
@@ -381,6 +412,21 @@
         guardBadge.title = guard.reason || '';
     }
 
+    function setContextBadge(context) {
+        const parts = [];
+        if (context && context.course_id) parts.push('курс ' + context.course_id);
+        if (context && context.day) parts.push('день ' + context.day);
+        if (!parts.length) {
+            contextBadge.classList.add('hidden');
+            contextBadge.textContent = '';
+            return;
+        }
+        contextBadge.classList.remove('hidden');
+        contextBadge.textContent = 'Контекст: ' + parts.join(', ');
+        contextBadge.className = 'admin-badge neutral';
+        contextBadge.title = 'Передаётся в модель вместе с запросом';
+    }
+
     async function onSend(event) {
         event.preventDefault();
         const text = chatInput.value.trim();
@@ -393,6 +439,8 @@
             setStatus(chatStatus, 'Заполните Base URL и модель в настройках доступа.', 'err');
             return;
         }
+        const context = getContext();
+        setContextBadge(context);
         persistSettings(settings, false);
         addMessage('user', text);
         messages.push({ role: 'user', content: text });
@@ -405,9 +453,10 @@
                 body: JSON.stringify({
                     config: settings,
                     messages: messages.slice(-40),
-                    context: getContext()
+                    context: context
                 })
             });
+            if (data.context) setContextBadge(data.context);
             const reply = data.reply || data.content || 'Модель вернула пустой ответ.';
             addMessage('assistant', reply);
             messages.push({ role: 'assistant', content: data.content || reply });
@@ -560,9 +609,18 @@
         document.querySelectorAll('.admin-course').forEach(function (element) {
             element.classList.toggle('active', element.dataset.course === currentCourse);
         });
+        setContextBadge(getContext());
+    });
+    contextDay.addEventListener('input', function () {
+        setContextBadge(getContext());
     });
 
-    applyTheme();
-    loadSettings();
-    checkSession();
+    async function init() {
+        applyTheme();
+        const defaultPrompt = await loadDefaultSystemPrompt();
+        loadSettings(defaultPrompt);
+        checkSession();
+    }
+
+    init();
 })();
