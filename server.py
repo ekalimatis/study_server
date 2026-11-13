@@ -23,6 +23,38 @@ COURSE_DIR = os.path.join(BASE_DIR, 'COURSE')
 BACKUP_DIR = os.path.join(COURSE_DIR, '.backups')
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 ADMIN_LOG = os.path.join(LOG_DIR, 'admin.log')
+ENV_FILE = os.path.join(BASE_DIR, '.env')
+
+
+def load_env_file(path):
+    loaded = 0
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if line.startswith('export '):
+                    line = line[7:].strip()
+                if '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                key = key.strip()
+                if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
+                    continue
+                if key in os.environ:
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                os.environ[key] = value
+                loaded += 1
+    except (OSError, UnicodeError):
+        return 0
+    return loaded
+
+
+ENV_LOADED = load_env_file(ENV_FILE)
 
 BLOCKED_NAMES = {
     'server.py',
@@ -1531,6 +1563,8 @@ def run():
         sys.exit(f'Cannot start server on {host}:{port}: {error}')
 
     print(f'Сервер запущен на http://{host}:{port}', flush=True)
+    if ENV_LOADED:
+        print(f'Переменные из .env загружены: {ENV_LOADED}', flush=True)
     if admin_configured():
         print('Админ-режим включён: /admin', flush=True)
     else:
