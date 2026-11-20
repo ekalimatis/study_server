@@ -13,6 +13,7 @@ services:
       PORT: "8000"
       ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      CHIEF_USERNAME: "${CHIEF_USERNAME:-admin}"
       ADMIN_SESSION_TTL: "${ADMIN_SESSION_TTL:-28800}"
       ADMIN_COOKIE_SECURE: "${ADMIN_COOKIE_SECURE:-0}"
       TRUST_PROXY: "${TRUST_PROXY:-0}"
@@ -23,9 +24,13 @@ services:
       TARGET_TIMEOUT: "${TARGET_TIMEOUT:-180}"
     volumes:
       - ./COURSE:/app/COURSE:rw
+      - study_data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import os, urllib.request; port = os.environ.get('PORT', '8000'); urllib.request.urlopen('http://127.0.0.1:' + port + '/healthz', timeout=3)"]
       interval: 30s
       timeout: 5s
       start_period: 5s
       retries: 3
+
+volumes:
+  study_data:

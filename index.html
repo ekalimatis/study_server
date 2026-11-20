@@ -8,12 +8,18 @@
     <meta http-equiv="Expires" content="0">
     <title>Обучение — Универсальный сервер</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20261113-mobile">
+    <link rel="stylesheet" href="styles.css?v=20261120-roles">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
 </head>
 <body>
 <div class="container">
+    <div class="account-bar" id="accountBar">
+        <span class="account-user" id="accountUser"></span>
+        <button class="account-logout" id="logoutBtn" type="button" title="Выйти">
+            <i class="fas fa-sign-out-alt"></i> Выйти
+        </button>
+    </div>
     <h1><i class="fas fa-graduation-cap"></i> Универсальный обучающий сервер</h1>
     <div class="subtitle" id="subtitle">
         <i class="fas fa-folder-open" style="margin-right:0.5rem;color:var(--secondary);"></i>
@@ -54,7 +60,7 @@
             </div>
             <div class="nav-links">
                 <a href="#" class="primary" id="refreshBtn"><i class="fas fa-sync"></i> Обновить список</a>
-                <a href="/admin" class="admin"><i class="fas fa-lock"></i> Админ</a>
+                <a href="/admin" class="admin" id="adminLink" style="display:none;"><i class="fas fa-lock"></i> Админ</a>
             </div>
         </div>
     </div>
@@ -62,6 +68,6 @@
 
     <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
 
-    <script src="app.js?v=20261113-mobile"></script>
+    <script src="app.js?v=20261120-roles"></script>
 </body>
 </html>

@@ -16,7 +16,9 @@ import time
 import urllib.error
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
+
+import accounts
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COURSE_DIR = os.path.join(BASE_DIR, 'COURSE')
@@ -59,6 +61,7 @@ ENV_LOADED = load_env_file(ENV_FILE)
 
 BLOCKED_NAMES = {
     'server.py',
+    'accounts.py',
     'dockerfile',
     'docker-compose.yml',
     'docker-compose.prod.yml',
@@ -68,6 +71,7 @@ BLOCKED_NAMES = {
     '.dockerignore',
     'logs',
     'tests',
+    'data',
 }
 
 CACHEABLE_SUFFIXES = (
@@ -120,7 +124,7 @@ FALLBACK_TARGET_SYSTEM_PROMPT = (
     "Не выполняй посторонние задачи."
 )
 
-SERVER_PROTOCOL_REMINDER = """Обязательное требование сервера: ответ — строго один JSON-объект вида {"reply": "...", "changes": [...]} без текста вне JSON. Разрешены только операции create_course, update_course, create_day, update_day. Если изменения не нужны, верни пустой массив changes. Не удаляй и не переименовывай курсы и дни."""
+SERVER_PROTOCOL_REMINDER = """Обязательное требование сервера: ответ — строго один JSON-объект вида {"reply": "...", "changes": [...]} без текста вне JSON. Разрешены только операции create_course, update_course, create_day, update_day. Если изменения не нужны, верни пустой массив changes. Не удаляй и не переименовывай курсы и дни. Не создавай и не изменяй курсы и дни вне указанной группы."""
 
 
 def load_default_target_prompt():
@@ -193,6 +197,10 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD') or ''
 ADMIN_SESSION_TTL = _env_int('ADMIN_SESSION_TTL', 8 * 3600, 300, 7 * 24 * 3600)
 ADMIN_COOKIE_SECURE = _env_bool('ADMIN_COOKIE_SECURE', False)
 TRUST_PROXY = _env_bool('TRUST_PROXY', False)
+CHIEF_USERNAME = (os.environ.get('CHIEF_USERNAME') or 'admin').strip() or 'admin'
+if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$', CHIEF_USERNAME):
+    CHIEF_USERNAME = 'admin'
+SESSION_COOKIE_NAME = 'study_session'
 
 GUARD_BASE_URL = (os.environ.get('GUARD_BASE_URL') or 'https://routerai.ru/api/v1').rstrip('/')
 GUARD_MODEL = (os.environ.get('GUARD_MODEL') or '').strip()
@@ -235,6 +243,60 @@ def admin_configured():
     return bool(ADMIN_PASSWORD_HASH or ADMIN_PASSWORD)
 
 
+def login_available():
+    return admin_configured() or accounts.has_active_users()
+
+
+def is_chief_username(username):
+    return str(username or '').strip().casefold() == CHIEF_USERNAME.casefold()
+
+
+def validate_account_username(username):
+    value = accounts.validate_username(username)
+    if is_chief_username(value):
+        raise ValidationError('Этот логин зарезервирован для главного администратора')
+    return value
+
+
+def authenticate_user(username, password):
+    name = str(username or '').strip()
+    if not name or not isinstance(password, str) or not password:
+        return None
+    if admin_configured() and is_chief_username(name) and verify_admin_password(password):
+        return {
+            'user_id': None,
+            'username': CHIEF_USERNAME,
+            'role': 'chief',
+            'group_id': None,
+        }
+    if is_chief_username(name):
+        return None
+    user = accounts.get_user_by_username(name)
+    if not user or not user['active']:
+        return None
+    if not accounts.verify_password(password, user['password_hash']):
+        return None
+    return {
+        'user_id': user['id'],
+        'username': user['username'],
+        'role': user['role'],
+        'group_id': user['group_id'],
+    }
+
+
+def identity_payload(identity):
+    group = None
+    if identity.get('group_id'):
+        group = accounts.get_group(identity['group_id'])
+    return {
+        'authenticated': True,
+        'user_id': identity.get('user_id'),
+        'username': identity.get('username'),
+        'role': identity.get('role'),
+        'group': group,
+    }
+
+
 def verify_admin_password(password):
     if ADMIN_PASSWORD_HASH:
         try:
@@ -258,30 +320,40 @@ def verify_admin_password(password):
 
 def prune_sessions():
     now = time.time()
-    expired = [token for token, expires in _sessions.items() if expires <= now]
+    expired = [
+        token for token, data in _sessions.items()
+        if not isinstance(data, dict) or data.get('expires', 0) <= now
+    ]
     for token in expired:
         _sessions.pop(token, None)
 
 
-def create_session():
+def create_session(identity):
     token = secrets.token_urlsafe(32)
+    record = dict(identity)
+    record['expires'] = time.time() + ADMIN_SESSION_TTL
     with _sessions_lock:
         prune_sessions()
-        _sessions[token] = time.time() + ADMIN_SESSION_TTL
+        _sessions[token] = record
     return token
 
 
-def session_valid(token):
+def session_identity(token):
     if not token:
-        return False
+        return None
     with _sessions_lock:
-        expires = _sessions.get(token)
-        if expires is None:
-            return False
-        if expires <= time.time():
+        data = _sessions.get(token)
+        if not isinstance(data, dict):
             _sessions.pop(token, None)
-            return False
-        return True
+            return None
+        if data.get('expires', 0) <= time.time():
+            _sessions.pop(token, None)
+            return None
+        return {key: value for key, value in data.items() if key != 'expires'}
+
+
+def session_valid(token):
+    return session_identity(token) is not None
 
 
 def drop_session(token):
@@ -289,6 +361,18 @@ def drop_session(token):
         return
     with _sessions_lock:
         _sessions.pop(token, None)
+
+
+def drop_user_sessions(user_id):
+    if user_id in (None, ''):
+        return
+    with _sessions_lock:
+        tokens = [
+            token for token, data in _sessions.items()
+            if isinstance(data, dict) and data.get('user_id') == user_id
+        ]
+        for token in tokens:
+            _sessions.pop(token, None)
 
 
 def _clean_attempts(ip):
@@ -606,6 +690,16 @@ def normalize_messages(raw):
     return messages
 
 
+def safe_group_id(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError('Некорректная группа')
+    if number <= 0:
+        raise ValidationError('Некорректная группа')
+    return number
+
+
 def normalize_context(raw):
     if raw is None:
         return {}
@@ -613,12 +707,101 @@ def normalize_context(raw):
         raise ValidationError('Контекст должен быть объектом')
     course_id = raw.get('course_id')
     day = raw.get('day')
+    group_id = raw.get('group_id')
     result = {}
     if course_id not in (None, ''):
         result['course_id'] = normalize_line(course_id, 'context.course_id', required=True, limit=128)
     if day not in (None, ''):
         result['day'] = safe_day_num(day)
+    if group_id not in (None, ''):
+        result['group_id'] = safe_group_id(group_id)
     return result
+
+
+def _identity_group(identity):
+    if identity.get('role') != 'admin':
+        raise ForbiddenError('Недостаточно прав для работы с группой')
+    group_id = identity.get('group_id')
+    if not group_id:
+        raise ForbiddenError('Администратор не привязан к группе')
+    return group_id
+
+
+def _require_group(group_id):
+    group = accounts.get_group(group_id)
+    if group is None:
+        raise NotFoundError('Группа не найдена')
+    return group
+
+
+def normalize_admin_context(identity, context):
+    role = identity.get('role')
+    requested_group = context.get('group_id')
+    if role == 'admin':
+        own_group = _identity_group(identity)
+        if requested_group not in (None, own_group):
+            raise ForbiddenError('Доступ к другой группе запрещён')
+        course_id = context.get('course_id')
+        if course_id:
+            existing = accounts.get_course_group(course_id)
+            if existing is not None and existing != own_group:
+                raise NotFoundError('Курс не найден в вашей группе')
+        context['group_id'] = own_group
+    elif role == 'chief':
+        if requested_group:
+            _require_group(requested_group)
+        course_id = context.get('course_id')
+        if course_id:
+            existing = accounts.get_course_group(course_id)
+            if existing is not None:
+                if requested_group and requested_group != existing:
+                    raise ConflictError('Курс принадлежит другой группе')
+                context['group_id'] = existing
+    else:
+        raise ForbiddenError('Недостаточно прав')
+    group_id = context.get('group_id')
+    if group_id:
+        group = _require_group(group_id)
+        context['group_name'] = group['name']
+    return context
+
+
+def authorize_changes(identity, changes, context):
+    role = identity.get('role')
+    requested_group = context.get('group_id')
+    if role == 'admin':
+        own_group = _identity_group(identity)
+        if requested_group not in (None, own_group):
+            raise ForbiddenError('Доступ к другой группе запрещён')
+        requested_group = own_group
+    elif role != 'chief':
+        raise ForbiddenError('Недостаточно прав')
+    if requested_group:
+        _require_group(requested_group)
+
+    assignments = {}
+    for change in changes:
+        course_id = change['course_id']
+        existing_group = accounts.get_course_group(course_id)
+        if change['op'] == 'create_course':
+            if existing_group is not None:
+                if role == 'admin' and existing_group != requested_group:
+                    raise ForbiddenError('Курс уже принадлежит другой группе')
+                if requested_group and existing_group != requested_group:
+                    raise ConflictError('Курс уже принадлежит другой группе')
+            elif requested_group:
+                assignments[course_id] = requested_group
+            continue
+        if role == 'admin':
+            if existing_group != requested_group:
+                raise NotFoundError('Курс не найден в вашей группе')
+            continue
+        if existing_group is not None:
+            if requested_group and existing_group != requested_group:
+                raise ConflictError('Курс принадлежит другой группе')
+        elif requested_group:
+            assignments[course_id] = requested_group
+    return assignments
 
 
 def atomic_write_text(path, text):
@@ -946,6 +1129,10 @@ def call_target_model(config, messages, context):
     system_prompt = config['system_prompt'] or DEFAULT_TARGET_SYSTEM_PROMPT
     system_prompt += '\n\n' + SERVER_PROTOCOL_REMINDER
     context_parts = []
+    if context.get('group_name'):
+        context_parts.append('группа: %s' % context['group_name'])
+    elif context.get('group_id'):
+        context_parts.append('группа №%d' % context['group_id'])
     if context.get('course_id'):
         context_parts.append('курс: %s' % context['course_id'])
     if context.get('day'):
@@ -1004,6 +1191,10 @@ def parse_guard_decision(content):
 
 def build_guard_prompt(messages, context):
     parts = []
+    if context.get('group_name'):
+        parts.append('группа: %s' % context['group_name'])
+    elif context.get('group_id'):
+        parts.append('группа №%d' % context['group_id'])
     if context.get('course_id'):
         parts.append('курс: %s' % context['course_id'])
     if context.get('day'):
@@ -1321,63 +1512,190 @@ class CustomHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
 
         if self.is_blocked(path):
             self.send_error(404)
-            return
-
-        if path == '/api/courses':
-            self.send_json(self.get_courses())
             return
 
         if path == '/healthz':
             self.send_json({'status': 'ok'})
             return
 
-        if path == '/api/admin/session':
-            token = self.session_token()
-            self.send_json({
-                'enabled': admin_configured(),
-                'authenticated': admin_configured() and session_valid(token),
-            })
+        if path.startswith('/api/'):
+            try:
+                self.handle_api_get(path, parsed)
+            except Exception as error:
+                self.send_exception(error, path)
             return
 
-        if path in ('/admin', '/admin/'):
+        identity = self.current_identity()
+
+        if path in ('/login', '/login.html'):
+            if identity:
+                next_path = parse_qs(parsed.query).get('next', [''])[0]
+                self.redirect(self.safe_next(next_path, identity))
+                return
+            self.path = '/login.html'
+            super().do_GET()
+            return
+
+        if path in ('', '/', '/index.html'):
+            if not identity:
+                self.redirect('/login?next=%2F')
+                return
+            super().do_GET()
+            return
+
+        if path in ('/admin', '/admin/', '/admin.html'):
+            if not identity:
+                self.redirect('/login?next=%2Fadmin')
+                return
+            if identity.get('role') not in ('chief', 'admin'):
+                self.redirect('/')
+                return
             self.path = '/admin.html'
             super().do_GET()
             return
 
-        if path == '/COURSE' or path == '/COURSE/' or (path.startswith('/COURSE/') and path.endswith('/')):
-            self.send_error(404)
+        course_parts = self.course_path_parts(path)
+        if course_parts is not None:
+            if len(course_parts) < 2 or unquote(path).endswith('/'):
+                self.send_error(404)
+                return
+            if not identity or not self.can_access_course_path(path, identity):
+                self.send_error(404)
+                return
+            super().do_GET()
             return
 
         super().do_GET()
 
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if self.is_blocked(path):
+            self.send_error(404)
+            return
+        if path.startswith('/api/'):
+            self.send_error(405)
+            return
+
+        identity = self.current_identity()
+
+        if path in ('/login', '/login.html'):
+            if identity:
+                next_path = parse_qs(parsed.query).get('next', [''])[0]
+                self.redirect(self.safe_next(next_path, identity))
+                return
+            self.path = '/login.html'
+            super().do_HEAD()
+            return
+
+        if path in ('', '/', '/index.html'):
+            if not identity:
+                self.redirect('/login?next=%2F')
+                return
+            super().do_HEAD()
+            return
+
+        if path in ('/admin', '/admin/', '/admin.html'):
+            if not identity:
+                self.redirect('/login?next=%2Fadmin')
+                return
+            if identity.get('role') not in ('chief', 'admin'):
+                self.redirect('/')
+                return
+            self.path = '/admin.html'
+            super().do_HEAD()
+            return
+
+        course_parts = self.course_path_parts(path)
+        if course_parts is not None:
+            if len(course_parts) < 2 or unquote(path).endswith('/'):
+                self.send_error(404)
+                return
+            if not identity or not self.can_access_course_path(path, identity):
+                self.send_error(404)
+                return
+            super().do_HEAD()
+            return
+
+        super().do_HEAD()
+
+    def handle_api_get(self, path, parsed):
+        if path == '/api/courses':
+            identity = self.require_user()
+            self.send_json(self.get_courses(identity))
+            return
+
+        if path in ('/api/session', '/api/admin/session'):
+            identity = self.current_identity()
+            payload = identity_payload(identity) if identity else {
+                'authenticated': False,
+                'user_id': None,
+                'username': None,
+                'role': None,
+                'group': None,
+            }
+            payload['enabled'] = admin_configured()
+            payload['login_available'] = login_available()
+            self.send_json(payload)
+            return
+
+        if path == '/api/admin/groups':
+            identity = self.require_admin()
+            self.send_json({'groups': self.visible_groups(identity)})
+            return
+
+        if path == '/api/admin/users':
+            identity = self.require_admin()
+            raw_group = parse_qs(parsed.query).get('group_id', [''])[0]
+            group_id = safe_group_id(raw_group) if raw_group not in ('', None) else None
+            self.send_json({'users': self.visible_users(identity, group_id)})
+            return
+
+        self.send_json({'error': 'Эндпоинт не найден: ' + path}, 404)
+
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path == '/api/admin/login':
-                self.handle_admin_login()
+            self.check_origin()
+            if path in ('/api/login', '/api/admin/login'):
+                self.handle_login()
                 return
-            if path == '/api/admin/logout':
-                self.check_origin()
-                self.handle_admin_logout()
+            if path in ('/api/logout', '/api/admin/logout'):
+                self.handle_logout()
                 return
             if path == '/api/admin/chat':
-                self.require_admin()
-                self.check_origin()
-                self.handle_admin_chat()
+                identity = self.require_admin()
+                self.handle_admin_chat(identity)
                 return
             if path == '/api/admin/apply':
-                self.require_admin()
-                self.check_origin()
-                self.handle_admin_apply()
+                identity = self.require_admin()
+                self.handle_admin_apply(identity)
                 return
             if path == '/api/admin/models':
                 self.require_admin()
-                self.check_origin()
                 self.handle_admin_models()
+                return
+            if path == '/api/admin/groups':
+                identity = self.require_chief()
+                self.handle_admin_create_group(identity)
+                return
+            if path == '/api/admin/users':
+                identity = self.require_admin()
+                self.handle_admin_create_user(identity)
+                return
+            if path == '/api/admin/courses/assign':
+                identity = self.require_chief()
+                self.handle_admin_assign_course(identity)
+                return
+            if path.startswith('/api/admin/users/'):
+                identity = self.require_admin()
+                self.handle_admin_user_action(identity, path)
                 return
             if path.startswith('/api/'):
                 self.discard_body()
@@ -1385,36 +1703,131 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 return
             self.discard_body()
             self.send_error(404)
-        except PayloadTooLarge as error:
-            self.close_connection = True
-            self.send_json({'error': str(error)}, 413, [('Connection', 'close')])
-        except ConflictError as error:
-            self.send_json({'error': str(error)}, 409)
-        except NotFoundError as error:
-            self.send_json({'error': str(error)}, 404)
-        except ForbiddenError as error:
-            self.send_json({'error': str(error)}, 403)
-        except ValidationError as error:
-            self.send_json({'error': str(error)}, 400)
-        except UnauthorizedError as error:
-            self.send_json({'error': str(error)}, 401)
-        except AdminDisabledError as error:
-            self.send_json({'error': str(error)}, 503)
-        except GuardUnavailableError as error:
-            self.send_json({'error': str(error)}, 503)
-        except UpstreamError as error:
-            self.send_json({'error': str(error)}, 502)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as error:
-            log_event('error', {'path': path, 'error': short(str(error), 300)})
-            self.send_json({'error': 'Внутренняя ошибка сервера'}, 500)
+            self.send_exception(error, path)
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Allow', 'GET, POST, OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
+
+    def send_exception(self, error, path=''):
+        if isinstance(error, PayloadTooLarge):
+            self.close_connection = True
+            self.send_json({'error': str(error)}, 413, [('Connection', 'close')])
+        elif isinstance(error, accounts.AccountConflict):
+            self.send_json({'error': str(error)}, 409)
+        elif isinstance(error, accounts.AccountNotFound):
+            self.send_json({'error': str(error)}, 404)
+        elif isinstance(error, accounts.AccountValidation):
+            self.send_json({'error': str(error)}, 400)
+        elif isinstance(error, accounts.AccountError):
+            self.send_json({'error': str(error)}, 400)
+        elif isinstance(error, ConflictError):
+            self.send_json({'error': str(error)}, 409)
+        elif isinstance(error, NotFoundError):
+            self.send_json({'error': str(error)}, 404)
+        elif isinstance(error, ForbiddenError):
+            self.send_json({'error': str(error)}, 403)
+        elif isinstance(error, ValidationError):
+            self.send_json({'error': str(error)}, 400)
+        elif isinstance(error, UnauthorizedError):
+            self.send_json({'error': str(error)}, 401)
+        elif isinstance(error, AdminDisabledError):
+            self.send_json({'error': str(error)}, 503)
+        elif isinstance(error, GuardUnavailableError):
+            self.send_json({'error': str(error)}, 503)
+        elif isinstance(error, UpstreamError):
+            self.send_json({'error': str(error)}, 502)
+        else:
+            log_event('error', {'path': path, 'error': short(str(error), 300)})
+            self.send_json({'error': 'Внутренняя ошибка сервера'}, 500)
+
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.send_header('Content-Length', '0')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+
+    def current_identity(self):
+        return session_identity(self.session_token())
+
+    def safe_next(self, value, identity):
+        target = str(value or '').strip()
+        if not target.startswith('/') or target.startswith('//') or '\\' in target:
+            target = '/'
+        if target.startswith('/login'):
+            target = '/'
+        if identity.get('role') == 'user' and (target == '/admin' or target.startswith('/admin/') or target.startswith('/admin?')):
+            target = '/'
+        return target
+
+    def course_path_parts(self, path):
+        decoded = unquote(path)
+        parts = [part for part in decoded.split('/') if part]
+        if not parts or parts[0].lower() != 'course':
+            return None
+        return parts
+
+    def can_access_course_path(self, path, identity):
+        parts = self.course_path_parts(path)
+        if parts is None or len(parts) < 2:
+            return False
+        if any(part in ('.', '..') for part in parts):
+            return False
+        try:
+            course_id = safe_course_id(parts[1])
+        except ValidationError:
+            return False
+        if identity.get('role') == 'chief':
+            return True
+        group_id = identity.get('group_id')
+        if not group_id:
+            return False
+        return accounts.get_course_group(course_id) == group_id
+
+    def visible_groups(self, identity):
+        if identity.get('role') == 'chief':
+            return accounts.list_groups()
+        group_id = identity.get('group_id')
+        if not group_id:
+            return []
+        group = accounts.get_group(group_id)
+        return [group] if group else []
+
+    def visible_users(self, identity, group_id=None):
+        if identity.get('role') == 'chief':
+            return accounts.list_users(group_id)
+        own_group = _identity_group(identity)
+        if group_id is not None and group_id != own_group:
+            raise ForbiddenError('Доступ к другой группе запрещён')
+        users = accounts.list_users(own_group)
+        return [user for user in users if user['role'] == 'user']
+
+    def require_user(self):
+        identity = self.current_identity()
+        if not identity:
+            self.close_connection = True
+            raise UnauthorizedError('Требуется вход')
+        return identity
+
+    def require_admin(self):
+        identity = self.require_user()
+        if identity.get('role') not in ('chief', 'admin'):
+            self.close_connection = True
+            raise ForbiddenError('Недостаточно прав')
+        return identity
+
+    def require_chief(self):
+        identity = self.require_user()
+        if identity.get('role') != 'chief':
+            self.close_connection = True
+            raise ForbiddenError('Действие доступно только главному администратору')
+        return identity
 
     def send_json(self, payload, status=200, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
@@ -1457,11 +1870,14 @@ class CustomHandler(SimpleHTTPRequestHandler):
 
     def session_token(self):
         cookie = self.headers.get('Cookie') or ''
+        legacy = ''
         for part in cookie.split(';'):
             name, _, value = part.strip().partition('=')
-            if name == 'study_admin_session':
+            if name == SESSION_COOKIE_NAME:
                 return value
-        return ''
+            if name == 'study_admin_session' and not legacy:
+                legacy = value
+        return legacy
 
     def cookie_secure(self):
         if ADMIN_COOKIE_SECURE:
@@ -1470,7 +1886,7 @@ class CustomHandler(SimpleHTTPRequestHandler):
 
     def build_session_cookie(self, token):
         parts = [
-            'study_admin_session=' + token,
+            SESSION_COOKIE_NAME + '=' + token,
             'Path=/',
             'HttpOnly',
             'SameSite=Strict',
@@ -1482,7 +1898,7 @@ class CustomHandler(SimpleHTTPRequestHandler):
 
     def clear_session_cookie(self):
         parts = [
-            'study_admin_session=',
+            SESSION_COOKIE_NAME + '=',
             'Path=/',
             'HttpOnly',
             'SameSite=Strict',
@@ -1508,19 +1924,13 @@ class CustomHandler(SimpleHTTPRequestHandler):
             self.close_connection = True
             raise ForbiddenError('Запрос с недопустимого источника')
 
-    def require_admin(self):
-        if not admin_configured():
+    def handle_login(self):
+        if not login_available():
             self.close_connection = True
-            raise AdminDisabledError('Админ-режим не настроен: задайте ADMIN_PASSWORD_HASH или ADMIN_PASSWORD')
-        if not session_valid(self.session_token()):
-            self.close_connection = True
-            raise UnauthorizedError('Требуется вход в админ-режим')
-
-    def handle_admin_login(self):
-        self.check_origin()
-        if not admin_configured():
-            self.close_connection = True
-            raise AdminDisabledError('Админ-режим не настроен: задайте ADMIN_PASSWORD_HASH или ADMIN_PASSWORD')
+            raise AdminDisabledError(
+                'Вход не настроен: задайте ADMIN_PASSWORD_HASH/ADMIN_PASSWORD '
+                'или создайте пользователей в базе'
+            )
         ip = self.client_ip()
         if not login_allowed(ip):
             self.discard_body()
@@ -1528,37 +1938,50 @@ class CustomHandler(SimpleHTTPRequestHandler):
             self.send_json({'error': 'Слишком много попыток входа. Повторите позже.'}, 429)
             return
         data = self.read_json_body()
+        username = data.get('username')
         password = data.get('password')
+        if not isinstance(username, str) or not username.strip():
+            raise ValidationError('Введите логин')
         if not isinstance(password, str) or not password:
             raise ValidationError('Введите пароль')
-        if not verify_admin_password(password):
+        identity = authenticate_user(username, password)
+        if not identity:
             record_login_failure(ip)
-            log_event('login', {'ok': False, 'ip': ip})
-            self.send_json({'error': 'Неверный пароль'}, 401)
+            log_event('login', {'ok': False, 'ip': ip, 'username': short(username, 80)})
+            self.send_json({'error': 'Неверный логин или пароль'}, 401)
             return
         clear_login_failures(ip)
-        token = create_session()
-        log_event('login', {'ok': True, 'ip': ip})
+        token = create_session(identity)
+        log_event('login', {
+            'ok': True,
+            'ip': ip,
+            'username': identity['username'],
+            'role': identity['role'],
+        })
+        payload = identity_payload(identity)
+        payload['enabled'] = admin_configured()
+        payload['login_available'] = True
         self.send_json(
-            {'authenticated': True},
+            payload,
             200,
             [('Set-Cookie', self.build_session_cookie(token))],
         )
 
-    def handle_admin_logout(self):
+    def handle_logout(self):
         self.discard_body()
         token = self.session_token()
         drop_session(token)
         log_event('logout', {'ip': self.client_ip()})
         self.send_json({'ok': True}, 200, [('Set-Cookie', self.clear_session_cookie())])
 
-    def handle_admin_chat(self):
+    def handle_admin_chat(self, identity):
         data = self.read_json_body()
         config = normalize_target_config(data.get('config'))
         if GUARD_MODEL and config['model'].lower() == GUARD_MODEL.lower():
             raise ValidationError('Целевая модель должна отличаться от контрольной')
         messages = normalize_messages(data.get('messages'))
         context = normalize_context(data.get('context'))
+        context = normalize_admin_context(identity, context)
         allowed, reason = call_guard_model(messages, context)
         if not allowed:
             self.send_json({
@@ -1573,6 +1996,8 @@ class CustomHandler(SimpleHTTPRequestHandler):
         except UpstreamError as error:
             log_event('target', {
                 'ok': False,
+                'username': identity.get('username'),
+                'role': identity.get('role'),
                 'provider': config['provider'],
                 'model': config['model'],
                 'max_tokens': config['num_ctx'],
@@ -1593,6 +2018,8 @@ class CustomHandler(SimpleHTTPRequestHandler):
             }
         log_event('target', {
             'ok': True,
+            'username': identity.get('username'),
+            'role': identity.get('role'),
             'provider': config['provider'],
             'model': config['model'],
             'max_tokens': config['num_ctx'],
@@ -1614,15 +2041,176 @@ class CustomHandler(SimpleHTTPRequestHandler):
             'usage': usage,
         })
 
-    def handle_admin_apply(self):
+    def handle_admin_apply(self, identity):
         data = self.read_json_body()
-        results = apply_changes(data.get('changes'))
+        raw_changes = data.get('changes')
+        context = normalize_context(data.get('context'))
+        context = normalize_admin_context(identity, context)
+        normalized = validate_changes(raw_changes)
+        assignments = authorize_changes(identity, normalized, context)
+        results = apply_changes(raw_changes)
+
+        mapping_errors = []
+        for course_id, group_id in assignments.items():
+            try:
+                accounts.set_course_group(course_id, group_id)
+            except Exception as error:
+                mapping_errors.append({
+                    'course_id': course_id,
+                    'group_id': group_id,
+                    'error': short(str(error), 300),
+                })
+                log_event('course_group_error', {
+                    'course_id': course_id,
+                    'group_id': group_id,
+                    'error': short(str(error), 300),
+                })
+
         log_event('apply', {
             'ok': True,
+            'username': identity.get('username'),
+            'role': identity.get('role'),
+            'group_id': context.get('group_id'),
             'changes': len(results),
             'courses': [item.get('course_id') for item in results],
         })
-        self.send_json({'ok': True, 'results': results})
+        payload = {'ok': True, 'results': results}
+        if mapping_errors:
+            payload['mapping_errors'] = mapping_errors
+        self.send_json(payload)
+
+    def ensure_can_manage_user(self, identity, target):
+        if identity.get('role') == 'chief':
+            return
+        if identity.get('role') != 'admin':
+            raise ForbiddenError('Недостаточно прав')
+        own_group = _identity_group(identity)
+        if target.get('role') != 'user' or target.get('group_id') != own_group:
+            raise ForbiddenError('Можно управлять только пользователями своей группы')
+
+    def handle_admin_create_group(self, identity):
+        data = self.read_json_body()
+        name = data.get('name') or data.get('group_name')
+        admin_username = data.get('admin_username') or data.get('username')
+        password = data.get('admin_password') or data.get('password')
+        username = validate_account_username(admin_username)
+        result = accounts.create_group_with_admin(name, username, password)
+        log_event('group_create', {
+            'ok': True,
+            'username': identity.get('username'),
+            'group_id': result['group']['id'],
+            'admin_username': result['user']['username'],
+        })
+        self.send_json({
+            'ok': True,
+            'group': result['group'],
+            'user': result['user'],
+        })
+
+    def handle_admin_create_user(self, identity):
+        data = self.read_json_body()
+        if identity.get('role') == 'admin':
+            group_id = _identity_group(identity)
+            raw_group = data.get('group_id')
+            if raw_group not in (None, '') and safe_group_id(raw_group) != group_id:
+                raise ForbiddenError('Доступ к другой группе запрещён')
+            if data.get('role') not in (None, '', 'user'):
+                raise ForbiddenError('Администратор может создавать только пользователей')
+        elif identity.get('role') == 'chief':
+            group_id = safe_group_id(data.get('group_id'))
+            _require_group(group_id)
+        else:
+            raise ForbiddenError('Недостаточно прав')
+        username = validate_account_username(data.get('username'))
+        user = accounts.create_user(username, data.get('password'), group_id, 'user')
+        log_event('user_create', {
+            'ok': True,
+            'username': identity.get('username'),
+            'user_id': user['id'],
+            'group_id': user['group_id'],
+        })
+        self.send_json({'ok': True, 'user': user})
+
+    def handle_admin_user_action(self, identity, path):
+        parts = [part for part in path.split('/') if part]
+        if len(parts) < 4 or parts[:3] != ['api', 'admin', 'users']:
+            raise NotFoundError('Эндпоинт не найден')
+        try:
+            user_id = int(parts[3])
+        except ValueError:
+            raise NotFoundError('Пользователь не найден')
+        target = accounts.get_user(user_id)
+        if target is None:
+            raise NotFoundError('Пользователь не найден')
+        self.ensure_can_manage_user(identity, target)
+
+        if len(parts) == 5:
+            if parts[4] != 'password':
+                raise NotFoundError('Эндпоинт не найден')
+            data = self.read_json_body()
+            accounts.set_password(user_id, data.get('password'))
+            drop_user_sessions(user_id)
+            log_event('user_password', {
+                'ok': True,
+                'username': identity.get('username'),
+                'user_id': user_id,
+            })
+            self.send_json({'ok': True})
+            return
+
+        if len(parts) != 4:
+            raise NotFoundError('Эндпоинт не найден')
+
+        data = self.read_json_body()
+        username = data.get('username') if 'username' in data else None
+        if username is not None:
+            username = validate_account_username(username)
+        active = data.get('active') if 'active' in data else None
+        if active is not None and not isinstance(active, bool):
+            raise ValidationError('Поле active должно быть true или false')
+
+        kwargs = {'username': username, 'active': active}
+        if 'group_id' in data:
+            raw_group = data.get('group_id')
+            new_group_id = None if raw_group in (None, '') else safe_group_id(raw_group)
+            if new_group_id is None:
+                raise ValidationError('Пользователь должен быть привязан к группе')
+            _require_group(new_group_id)
+            if identity.get('role') == 'admin' and new_group_id != target.get('group_id'):
+                raise ForbiddenError('Администратор не может переносить пользователей')
+            kwargs['group_id'] = new_group_id
+
+        updated = accounts.update_user(user_id, **kwargs)
+        drop_user_sessions(user_id)
+        log_event('user_update', {
+            'ok': True,
+            'username': identity.get('username'),
+            'user_id': user_id,
+            'active': updated.get('active'),
+            'group_id': updated.get('group_id'),
+        })
+        self.send_json({'ok': True, 'user': updated})
+
+    def handle_admin_assign_course(self, identity):
+        data = self.read_json_body()
+        course_id = safe_course_id(data.get('course_id'))
+        raw_group = data.get('group_id')
+        group_id = None if raw_group in (None, '') else safe_group_id(raw_group)
+        if group_id is not None:
+            _require_group(group_id)
+        ensure_course_exists(course_id)
+        accounts.set_course_group(course_id, group_id)
+        log_event('course_group', {
+            'ok': True,
+            'username': identity.get('username'),
+            'course_id': course_id,
+            'group_id': group_id,
+        })
+        self.send_json({
+            'ok': True,
+            'course_id': course_id,
+            'group_id': group_id,
+        })
 
     def handle_admin_models(self):
         data = self.read_json_body()
@@ -1638,19 +2226,28 @@ class CustomHandler(SimpleHTTPRequestHandler):
 
     @staticmethod
     def is_blocked(path):
-        parts = [unquote(part) for part in path.split('/') if part]
+        decoded = unquote(path)
+        parts = [part for part in decoded.split('/') if part]
         if not parts:
             return False
-        if parts[0].lower() in ('logs', 'tests'):
+        if parts[0].lower() in ('logs', 'tests', 'data'):
             return True
         if len(parts) == 1 and parts[0].lower() in BLOCKED_NAMES:
             return True
         return any(part.startswith('.') for part in parts)
 
-    def get_courses(self):
+    def get_courses(self, identity):
         if not os.path.isdir(COURSE_DIR):
             return []
 
+        allowed_group = None
+        if identity.get('role') != 'chief':
+            allowed_group = identity.get('group_id')
+            if not allowed_group:
+                return []
+
+        course_groups = accounts.course_groups_map()
+        group_names = {group['id']: group['name'] for group in accounts.list_groups()}
         result = []
         try:
             course_names = sorted(os.listdir(COURSE_DIR))
@@ -1661,6 +2258,10 @@ class CustomHandler(SimpleHTTPRequestHandler):
             course_path = os.path.join(COURSE_DIR, item)
             main_path = os.path.join(course_path, 'main.md')
             if not os.path.isdir(course_path) or not os.path.isfile(main_path):
+                continue
+
+            group_id = course_groups.get(item)
+            if allowed_group is not None and group_id != allowed_group:
                 continue
 
             try:
@@ -1703,6 +2304,8 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 'title': title,
                 'description': description,
                 'days': days,
+                'group_id': group_id,
+                'group_name': group_names.get(group_id),
             })
 
         return result
@@ -1716,6 +2319,11 @@ def run():
         sys.exit('PORT must be an integer')
 
     try:
+        accounts.init_db()
+    except Exception as error:
+        sys.exit(f'Cannot initialize accounts database: {error}')
+
+    try:
         httpd = ThreadingHTTPServer((host, port), CustomHandler)
     except OSError as error:
         sys.exit(f'Cannot start server on {host}:{port}: {error}')
@@ -1723,10 +2331,14 @@ def run():
     print(f'Сервер запущен на http://{host}:{port}', flush=True)
     if ENV_LOADED:
         print(f'Переменные из .env загружены: {ENV_LOADED}', flush=True)
+    print(f'База пользователей: {accounts.DB_PATH}', flush=True)
     if admin_configured():
-        print('Админ-режим включён: /admin', flush=True)
+        print('Вход включён: /login (главный администратор: %s)' % CHIEF_USERNAME, flush=True)
+    elif login_available():
+        print('Вход включён: /login (главный администратор не настроен)', flush=True)
     else:
-        print('Админ-режим выключен: задайте ADMIN_PASSWORD_HASH или ADMIN_PASSWORD', flush=True)
+        print('Вход выключен: задайте ADMIN_PASSWORD_HASH/ADMIN_PASSWORD', flush=True)
+    print('Админ-режим: /admin', flush=True)
     if GUARD_MODEL:
         print(f'Контрольная модель: {GUARD_MODEL} @ {GUARD_BASE_URL}', flush=True)
     else:

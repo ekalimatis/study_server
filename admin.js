@@ -25,17 +25,40 @@
         system_prompt: DEFAULT_SYSTEM_PROMPT
     };
 
-    const loginView = document.getElementById('loginView');
     const adminView = document.getElementById('adminView');
-    const loginForm = document.getElementById('loginForm');
-    const passwordInput = document.getElementById('passwordInput');
-    const loginStatus = document.getElementById('loginStatus');
     const logoutBtn = document.getElementById('logoutBtn');
+    const adminIdentity = document.getElementById('adminIdentity');
+    const adminSubtitle = document.getElementById('adminSubtitle');
+
+    const manageBlock = document.getElementById('manageBlock');
+    const manageSummary = document.getElementById('manageSummary');
+    const chiefGroupFormWrap = document.getElementById('chiefGroupFormWrap');
+    const groupNameInput = document.getElementById('groupNameInput');
+    const groupAdminLogin = document.getElementById('groupAdminLogin');
+    const groupAdminPassword = document.getElementById('groupAdminPassword');
+    const createGroupBtn = document.getElementById('createGroupBtn');
+    const groupStatus = document.getElementById('groupStatus');
+    const groupsSection = document.getElementById('groupsSection');
+    const refreshGroupsBtn = document.getElementById('refreshGroupsBtn');
+    const groupsList = document.getElementById('groupsList');
+    const refreshUsersBtn = document.getElementById('refreshUsersBtn');
+    const usersList = document.getElementById('usersList');
+    const createUserForm = document.getElementById('createUserForm');
+    const userUsernameInput = document.getElementById('userUsernameInput');
+    const userPasswordInput = document.getElementById('userPasswordInput');
+    const userGroupWrap = document.getElementById('userGroupWrap');
+    const userGroupSelect = document.getElementById('userGroupSelect');
+    const userStatus = document.getElementById('userStatus');
 
     const courseList = document.getElementById('courseList');
     const refreshCoursesBtn = document.getElementById('refreshCoursesBtn');
+    const contextGroupWrap = document.getElementById('contextGroupWrap');
+    const contextGroup = document.getElementById('contextGroup');
     const contextCourse = document.getElementById('contextCourse');
     const contextDay = document.getElementById('contextDay');
+    const assignCourseWrap = document.getElementById('assignCourseWrap');
+    const assignCourseBtn = document.getElementById('assignCourseBtn');
+    const assignStatus = document.getElementById('assignStatus');
 
     const cfgProvider = document.getElementById('cfgProvider');
     const cfgBaseUrl = document.getElementById('cfgBaseUrl');
@@ -63,6 +86,9 @@
     const applyAllBtn = document.getElementById('applyAllBtn');
     const applyStatus = document.getElementById('applyStatus');
 
+    let identity = null;
+    let groups = [];
+    let users = [];
     let courses = [];
     let messages = [];
     let pendingChanges = [];
@@ -76,6 +102,7 @@
     }
 
     function setStatus(element, text, type) {
+        if (!element) return;
         element.textContent = text || '';
         element.className = 'admin-status' + (type ? ' ' + type : '');
     }
@@ -90,6 +117,20 @@
         return isFinite(number) ? number : fallback;
     }
 
+    function isChief() {
+        return identity && identity.role === 'chief';
+    }
+
+    function isAdmin() {
+        return identity && identity.role === 'admin';
+    }
+
+    function roleLabel() {
+        if (isChief()) return 'Главный администратор';
+        if (isAdmin()) return 'Администратор';
+        return 'Пользователь';
+    }
+
     function applyTheme() {
         let theme = null;
         try {
@@ -102,16 +143,29 @@
         }
     }
 
-    async function loadDefaultSystemPrompt() {
-        try {
-            const response = await fetch('/system_prompt.txt?ts=' + Date.now(), { cache: 'no-store' });
-            if (!response.ok) return null;
-            const text = await response.text();
-            const prompt = text.replace(/^\uFEFF/, '').trim();
-            return prompt || null;
-        } catch (error) {
-            return null;
+    function updateIdentityUi() {
+        if (!identity) return;
+        const groupName = identity.group && identity.group.name ? identity.group.name : '';
+        if (adminIdentity) {
+            adminIdentity.textContent = identity.username + ' · ' + roleLabel() + (groupName ? ' · ' + groupName : '');
         }
+        if (adminSubtitle) {
+            adminSubtitle.textContent = isChief()
+                ? 'Все группы, курсы и пользователи'
+                : 'Группа: ' + (groupName || 'не назначена');
+        }
+        if (manageSummary) {
+            manageSummary.textContent = isChief() ? 'Группы и пользователи' : 'Пользователи группы';
+        }
+        if (chiefGroupFormWrap) chiefGroupFormWrap.classList.toggle('hidden', !isChief());
+        if (userGroupWrap) userGroupWrap.classList.toggle('hidden', !isChief());
+        if (contextGroupWrap) contextGroupWrap.classList.toggle('hidden', !isChief());
+        if (assignCourseWrap) assignCourseWrap.classList.toggle('hidden', !isChief());
+        if (groupsSection) groupsSection.classList.toggle('hidden', false);
+    }
+
+    function redirectToLogin() {
+        window.location.replace('/login?next=%2Fadmin');
     }
 
     async function api(path, options) {
@@ -132,8 +186,8 @@
             }
         }
         if (!response.ok) {
-            if (response.status === 401 && path !== '/api/admin/login') {
-                showLogin('Сессия истекла. Войдите снова.');
+            if (response.status === 401) {
+                redirectToLogin();
             }
             const error = new Error((data && data.error) || ('HTTP ' + response.status));
             error.status = response.status;
@@ -143,75 +197,16 @@
         return data || {};
     }
 
-    function showLogin(message) {
-        loginView.classList.remove('hidden');
-        adminView.classList.add('hidden');
-        logoutBtn.classList.add('hidden');
-        if (typeof message === 'string' && message) {
-            setStatus(loginStatus, message, 'err');
-        }
-    }
-
-    function showAdmin() {
-        loginView.classList.add('hidden');
-        adminView.classList.remove('hidden');
-        logoutBtn.classList.remove('hidden');
-        setStatus(loginStatus, '', '');
-        loadCourses();
-    }
-
-    async function checkSession() {
+    async function loadDefaultSystemPrompt() {
         try {
-            const data = await api('/api/admin/session');
-            if (data.enabled === false) {
-                showLogin('Админ-режим не настроен на сервере. Задайте ADMIN_PASSWORD_HASH или ADMIN_PASSWORD.');
-                return;
-            }
-            if (data.authenticated) {
-                showAdmin();
-            } else {
-                showLogin('');
-            }
+            const response = await fetch('/system_prompt.txt?ts=' + Date.now(), { cache: 'no-store' });
+            if (!response.ok) return null;
+            const text = await response.text();
+            const prompt = text.replace(/^\uFEFF/, '').trim();
+            return prompt || null;
         } catch (error) {
-            showLogin('Не удалось проверить сессию: ' + error.message);
+            return null;
         }
-    }
-
-    async function onLogin(event) {
-        event.preventDefault();
-        const password = passwordInput.value;
-        if (!password) {
-            setStatus(loginStatus, 'Введите пароль.', 'err');
-            return;
-        }
-        setStatus(loginStatus, 'Проверка пароля…', 'load');
-        try {
-            await api('/api/admin/login', {
-                method: 'POST',
-                body: JSON.stringify({ password: password })
-            });
-            passwordInput.value = '';
-            setStatus(loginStatus, '', '');
-            showAdmin();
-        } catch (error) {
-            setStatus(loginStatus, 'Ошибка входа: ' + error.message, 'err');
-        }
-    }
-
-    async function onLogout() {
-        try {
-            await api('/api/admin/logout', { method: 'POST' });
-        } catch (error) {
-            /* ignore */
-        }
-        messages = [];
-        pendingChanges = [];
-        chatMessages.innerHTML = '';
-        chatMessages.appendChild(create('div', 'admin-empty', 'Опишите задачу: например, «Создай курс по PostgreSQL на 3 дня».'));
-        hideChanges();
-        setGuardBadge(null);
-        setContextBadge(null);
-        showLogin('');
     }
 
     function loadSettings(defaultPrompt) {
@@ -322,6 +317,305 @@
         }
     }
 
+    async function checkSession() {
+        try {
+            const data = await api('/api/session');
+            if (!data.authenticated) {
+                redirectToLogin();
+                return false;
+            }
+            if (data.role !== 'chief' && data.role !== 'admin') {
+                window.location.replace('/');
+                return false;
+            }
+            identity = data;
+            updateIdentityUi();
+            adminView.classList.remove('hidden');
+            await loadGroups();
+            await Promise.all([loadUsers(), loadCourses()]);
+            return true;
+        } catch (error) {
+            if (error.status === 401) return false;
+            if (adminIdentity) adminIdentity.textContent = 'Ошибка: ' + error.message;
+            return false;
+        }
+    }
+
+    async function onLogout() {
+        try {
+            await api('/api/logout', { method: 'POST' });
+        } catch (error) {
+            /* ignore */
+        }
+        window.location.replace('/login');
+    }
+
+    async function loadGroups() {
+        try {
+            const data = await api('/api/admin/groups');
+            groups = Array.isArray(data.groups) ? data.groups : [];
+            renderGroups();
+            populateGroupSelects();
+        } catch (error) {
+            if (error.status === 401) return;
+            groupsList.innerHTML = '';
+            groupsList.appendChild(create('div', 'admin-empty', 'Не удалось загрузить группы: ' + error.message));
+        }
+    }
+
+    function renderGroups() {
+        groupsList.innerHTML = '';
+        if (!groups.length) {
+            groupsList.appendChild(create('div', 'admin-empty', 'Групп пока нет.'));
+            return;
+        }
+        groups.forEach(function (group) {
+            const row = create('div', 'admin-group-row');
+            const info = create('div', 'admin-group-info');
+            info.appendChild(create('strong', '', group.name));
+            const details = [];
+            if (group.owner_username) details.push('админ: ' + group.owner_username);
+            details.push('пользователей: ' + group.user_count);
+            details.push('курсов: ' + group.course_count);
+            info.appendChild(create('span', '', details.join(' · ')));
+            row.appendChild(info);
+            groupsList.appendChild(row);
+        });
+    }
+
+    function fillGroupSelect(select, includeEmpty) {
+        const selected = select.value;
+        select.innerHTML = '';
+        if (includeEmpty) select.appendChild(new Option('Без группы', ''));
+        groups.forEach(function (group) {
+            select.appendChild(new Option(group.name, String(group.id)));
+        });
+        if (selected && Array.from(select.options).some(function (option) { return option.value === selected; })) {
+            select.value = selected;
+        }
+    }
+
+    function populateGroupSelects() {
+        fillGroupSelect(userGroupSelect, false);
+        fillGroupSelect(contextGroup, true);
+        if (!isChief()) {
+            const groupId = identity && identity.group ? String(identity.group.id) : '';
+            if (groupId && Array.from(userGroupSelect.options).some(function (option) { return option.value === groupId; })) {
+                userGroupSelect.value = groupId;
+            }
+            if (groupId && Array.from(contextGroup.options).some(function (option) { return option.value === groupId; })) {
+                contextGroup.value = groupId;
+            }
+        }
+    }
+
+    async function loadUsers() {
+        try {
+            const data = await api('/api/admin/users');
+            users = Array.isArray(data.users) ? data.users : [];
+            renderUsers();
+        } catch (error) {
+            if (error.status === 401) return;
+            usersList.innerHTML = '';
+            usersList.appendChild(create('div', 'admin-empty', 'Не удалось загрузить пользователей: ' + error.message));
+        }
+    }
+
+    function findUser(userId) {
+        return users.find(function (user) { return user.id === userId; });
+    }
+
+    function renderUsers() {
+        usersList.innerHTML = '';
+        if (!users.length) {
+            usersList.appendChild(create('div', 'admin-empty', 'Пользователей пока нет.'));
+            return;
+        }
+        users.forEach(function (user) {
+            const row = create('div', 'admin-user-row');
+            row.dataset.userId = String(user.id);
+
+            const name = create('input', 'admin-input admin-user-name');
+            name.type = 'text';
+            name.value = user.username;
+            name.maxLength = 32;
+            name.autocomplete = 'off';
+            row.appendChild(name);
+
+            const role = create('span', 'admin-chip', user.role === 'admin' ? 'Администратор' : 'Пользователь');
+            row.appendChild(role);
+
+            if (isChief() && user.role !== 'admin') {
+                const groupSelect = create('select', 'admin-input admin-user-group');
+                groups.forEach(function (group) {
+                    groupSelect.appendChild(new Option(group.name, String(group.id)));
+                });
+                if (user.group_id != null) groupSelect.value = String(user.group_id);
+                row.appendChild(groupSelect);
+            } else {
+                row.appendChild(create('span', 'admin-chip', user.group_name || 'Без группы'));
+            }
+
+            row.appendChild(create('span', 'admin-chip ' + (user.active ? 'ok' : 'err'), user.active ? 'Активен' : 'Отключён'));
+
+            const actions = create('div', 'admin-user-actions');
+            const save = create('button', 'admin-btn mini', 'Сохранить');
+            save.type = 'button';
+            save.dataset.action = 'save';
+            actions.appendChild(save);
+
+            const password = create('input', 'admin-input admin-user-password');
+            password.type = 'password';
+            password.placeholder = 'Новый пароль';
+            password.autocomplete = 'new-password';
+            password.minLength = 8;
+            actions.appendChild(password);
+
+            const reset = create('button', 'admin-btn mini', 'Сбросить пароль');
+            reset.type = 'button';
+            reset.dataset.action = 'password';
+            actions.appendChild(reset);
+
+            const toggle = create('button', 'admin-btn mini', user.active ? 'Отключить' : 'Включить');
+            toggle.type = 'button';
+            toggle.dataset.action = 'toggle';
+            actions.appendChild(toggle);
+            row.appendChild(actions);
+
+            usersList.appendChild(row);
+        });
+    }
+
+    async function createGroup() {
+        const name = groupNameInput.value.trim();
+        const username = groupAdminLogin.value.trim();
+        const password = groupAdminPassword.value;
+        if (!name || !username || !password) {
+            setStatus(groupStatus, 'Заполните название группы, логин и пароль администратора.', 'err');
+            return;
+        }
+        createGroupBtn.disabled = true;
+        setStatus(groupStatus, 'Создание группы…', 'load');
+        try {
+            await api('/api/admin/groups', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: name,
+                    admin_username: username,
+                    admin_password: password
+                })
+            });
+            groupNameInput.value = '';
+            groupAdminLogin.value = '';
+            groupAdminPassword.value = '';
+            setStatus(groupStatus, 'Группа и администратор созданы.', 'ok');
+            await loadGroups();
+            await Promise.all([loadUsers(), loadCourses()]);
+        } catch (error) {
+            setStatus(groupStatus, 'Ошибка: ' + error.message, 'err');
+        } finally {
+            createGroupBtn.disabled = false;
+        }
+    }
+
+    async function createUser(event) {
+        event.preventDefault();
+        const username = userUsernameInput.value.trim();
+        const password = userPasswordInput.value;
+        if (!username || !password) {
+            setStatus(userStatus, 'Введите логин и пароль.', 'err');
+            return;
+        }
+        const body = { username: username, password: password };
+        if (isChief()) {
+            const groupId = parseInt(userGroupSelect.value, 10);
+            if (!isFinite(groupId) || groupId <= 0) {
+                setStatus(userStatus, 'Сначала создайте группу и выберите её.', 'err');
+                return;
+            }
+            body.group_id = groupId;
+        }
+        setStatus(userStatus, 'Создание пользователя…', 'load');
+        try {
+            await api('/api/admin/users', {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
+            userUsernameInput.value = '';
+            userPasswordInput.value = '';
+            setStatus(userStatus, 'Пользователь создан.', 'ok');
+            await Promise.all([loadUsers(), loadGroups()]);
+        } catch (error) {
+            setStatus(userStatus, 'Ошибка: ' + error.message, 'err');
+        }
+    }
+
+    async function updateUser(userId, body, successText) {
+        try {
+            await api('/api/admin/users/' + userId, {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
+            setStatus(userStatus, successText || 'Пользователь обновлён.', 'ok');
+            await Promise.all([loadUsers(), loadGroups()]);
+        } catch (error) {
+            setStatus(userStatus, 'Ошибка: ' + error.message, 'err');
+        }
+    }
+
+    async function onUsersClick(event) {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const row = button.closest('.admin-user-row');
+        if (!row) return;
+        const userId = parseInt(row.dataset.userId, 10);
+        const user = findUser(userId);
+        if (!user) return;
+
+        if (button.dataset.action === 'save') {
+            const nameInput = row.querySelector('.admin-user-name');
+            const groupSelect = row.querySelector('.admin-user-group');
+            const body = { username: nameInput.value.trim() };
+            if (groupSelect) {
+                const groupId = parseInt(groupSelect.value, 10);
+                if (isFinite(groupId) && groupId > 0) body.group_id = groupId;
+            }
+            button.disabled = true;
+            await updateUser(userId, body, 'Пользователь обновлён.');
+            button.disabled = false;
+            return;
+        }
+
+        if (button.dataset.action === 'password') {
+            const passwordInput = row.querySelector('.admin-user-password');
+            const password = passwordInput.value;
+            if (!password) {
+                setStatus(userStatus, 'Введите новый пароль.', 'err');
+                return;
+            }
+            button.disabled = true;
+            try {
+                await api('/api/admin/users/' + userId + '/password', {
+                    method: 'POST',
+                    body: JSON.stringify({ password: password })
+                });
+                passwordInput.value = '';
+                setStatus(userStatus, 'Пароль изменён. Сеансы пользователя завершены.', 'ok');
+            } catch (error) {
+                setStatus(userStatus, 'Ошибка: ' + error.message, 'err');
+            } finally {
+                button.disabled = false;
+            }
+            return;
+        }
+
+        if (button.dataset.action === 'toggle') {
+            button.disabled = true;
+            await updateUser(userId, { active: !user.active }, user.active ? 'Пользователь отключён.' : 'Пользователь включён.');
+            button.disabled = false;
+        }
+    }
+
     async function loadCourses() {
         try {
             const data = await api('/api/courses');
@@ -329,6 +623,7 @@
             renderCourses();
             populateContextCourses();
         } catch (error) {
+            if (error.status === 401) return;
             courseList.innerHTML = '';
             courseList.appendChild(create('div', 'admin-empty', 'Не удалось загрузить курсы: ' + error.message));
         }
@@ -346,7 +641,8 @@
             if (course.id === currentCourse) card.classList.add('active');
             card.appendChild(create('strong', '', course.title || course.id));
             const daysCount = Array.isArray(course.days) ? course.days.length : 0;
-            card.appendChild(create('span', '', course.id + ' · ' + daysCount + ' дн.'));
+            const groupName = course.group_name || (isChief() ? 'без группы' : '');
+            card.appendChild(create('span', '', course.id + ' · ' + daysCount + ' дн.' + (groupName ? ' · ' + groupName : '')));
             card.addEventListener('click', function () {
                 selectContextCourse(course.id);
             });
@@ -375,6 +671,10 @@
         document.querySelectorAll('.admin-course').forEach(function (element) {
             element.classList.toggle('active', element.dataset.course === currentCourse);
         });
+        const course = courses.find(function (item) { return item.id === currentCourse; });
+        if (isChief() && course) {
+            contextGroup.value = course.group_id != null ? String(course.group_id) : '';
+        }
         setContextBadge(getContext());
     }
 
@@ -387,7 +687,38 @@
             const day = parseInt(dayValue, 10);
             if (isFinite(day) && day > 0) context.day = day;
         }
+        if (isChief()) {
+            const groupId = parseInt(contextGroup.value, 10);
+            if (isFinite(groupId) && groupId > 0) context.group_id = groupId;
+        } else if (identity && identity.group) {
+            context.group_name = identity.group.name;
+        }
         return context;
+    }
+
+    async function assignCourseGroup() {
+        if (!isChief()) return;
+        const courseId = contextCourse.value;
+        if (!courseId) {
+            setStatus(assignStatus, 'Сначала выберите курс.', 'err');
+            return;
+        }
+        const groupId = contextGroup.value ? parseInt(contextGroup.value, 10) : null;
+        setStatus(assignStatus, 'Сохранение привязки…', 'load');
+        try {
+            await api('/api/admin/courses/assign', {
+                method: 'POST',
+                body: JSON.stringify({
+                    course_id: courseId,
+                    group_id: groupId
+                })
+            });
+            setStatus(assignStatus, 'Привязка сохранена.', 'ok');
+            await Promise.all([loadCourses(), loadGroups()]);
+            selectContextCourse(courseId);
+        } catch (error) {
+            setStatus(assignStatus, 'Ошибка: ' + error.message, 'err');
+        }
     }
 
     function addMessage(role, text) {
@@ -412,8 +743,21 @@
         guardBadge.title = guard.reason || '';
     }
 
+    function groupNameForContext(context) {
+        if (!context) return '';
+        if (context.group_name) return context.group_name;
+        if (context.group_id) {
+            const group = groups.find(function (item) { return item.id === context.group_id; });
+            if (group) return group.name;
+        }
+        if (!isChief() && identity && identity.group) return identity.group.name;
+        return '';
+    }
+
     function setContextBadge(context) {
         const parts = [];
+        const groupName = groupNameForContext(context);
+        if (groupName) parts.push('группа ' + groupName);
         if (context && context.course_id) parts.push('курс ' + context.course_id);
         if (context && context.day) parts.push('день ' + context.day);
         if (!parts.length) {
@@ -432,6 +776,10 @@
         const text = chatInput.value.trim();
         if (!text) {
             setStatus(chatStatus, 'Введите задачу.', 'err');
+            return;
+        }
+        if (isAdmin() && (!identity.group || !identity.group.id)) {
+            setStatus(chatStatus, 'Администратор не привязан к группе. Обратитесь к главному администратору.', 'err');
             return;
         }
         const settings = collectSettings();
@@ -476,9 +824,7 @@
                 const reason = (error.data && error.data.reason) || error.message;
                 setStatus(chatStatus, 'Запрос отклонён контрольной моделью: ' + reason, 'err');
                 setGuardBadge({ allowed: false, reason: reason });
-            } else if (error.status === 401) {
-                showLogin('Сессия истекла. Войдите снова.');
-            } else {
+            } else if (error.status !== 401) {
                 setStatus(chatStatus, 'Ошибка: ' + error.message, 'err');
             }
         } finally {
@@ -559,7 +905,10 @@
         try {
             const data = await api('/api/admin/apply', {
                 method: 'POST',
-                body: JSON.stringify({ changes: changes })
+                body: JSON.stringify({
+                    changes: changes,
+                    context: getContext()
+                })
             });
             const results = Array.isArray(data.results) ? data.results : [];
             const okCount = results.filter(function (item) { return item.ok; }).length;
@@ -579,16 +928,23 @@
                 if (okCount === results.length) pendingChanges = [];
                 else applyAllBtn.disabled = false;
             }
-            loadCourses();
+            await Promise.all([loadCourses(), loadGroups()]);
         } catch (error) {
             if (button) button.disabled = false;
             if (!card) applyAllBtn.disabled = false;
-            setStatus(applyStatus, 'Ошибка применения: ' + error.message, 'err');
+            if (error.status !== 401) setStatus(applyStatus, 'Ошибка применения: ' + error.message, 'err');
         }
     }
 
-    loginForm.addEventListener('submit', onLogin);
     logoutBtn.addEventListener('click', onLogout);
+    chiefGroupFormWrap.addEventListener('submit', function (event) {
+        event.preventDefault();
+        createGroup();
+    });
+    createUserForm.addEventListener('submit', createUser);
+    refreshGroupsBtn.addEventListener('click', loadGroups);
+    refreshUsersBtn.addEventListener('click', loadUsers);
+    usersList.addEventListener('click', onUsersClick);
     refreshCoursesBtn.addEventListener('click', loadCourses);
     saveSettingsBtn.addEventListener('click', onSaveSettings);
     testConnectionBtn.addEventListener('click', onTestConnection);
@@ -605,21 +961,22 @@
         applyChanges(pendingChanges, null, applyAllBtn);
     });
     contextCourse.addEventListener('change', function () {
-        currentCourse = contextCourse.value;
-        document.querySelectorAll('.admin-course').forEach(function (element) {
-            element.classList.toggle('active', element.dataset.course === currentCourse);
-        });
-        setContextBadge(getContext());
+        selectContextCourse(contextCourse.value);
     });
     contextDay.addEventListener('input', function () {
         setContextBadge(getContext());
     });
+    contextGroup.addEventListener('change', function () {
+        setContextBadge(getContext());
+        setStatus(assignStatus, '', '');
+    });
+    assignCourseBtn.addEventListener('click', assignCourseGroup);
 
     async function init() {
         applyTheme();
         const defaultPrompt = await loadDefaultSystemPrompt();
         loadSettings(defaultPrompt);
-        checkSession();
+        await checkSession();
     }
 
     init();

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>Вход — Учебный сервер</title>
+    <link rel="stylesheet" href="/styles.css?v=20261120-roles">
+    <link rel="stylesheet" href="/admin.css?v=20261120-roles">
+</head>
+<body class="admin-body login-body">
+<div class="admin-shell">
+    <section class="admin-card admin-login">
+        <h1 class="login-title">Учебный сервер</h1>
+        <p class="admin-muted" id="loginHint">
+            Войдите, чтобы открыть курсы своей группы.
+        </p>
+        <form id="loginForm" class="admin-form">
+            <label class="admin-label">Логин
+                <input id="usernameInput" type="text" class="admin-input" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+            </label>
+            <label class="admin-label">Пароль
+                <input id="passwordInput" type="password" class="admin-input" autocomplete="current-password" required>
+            </label>
+            <button id="loginBtn" type="submit" class="admin-btn primary">Войти</button>
+            <div id="loginStatus" class="admin-status" aria-live="polite"></div>
+        </form>
+    </section>
+</div>
+<script src="/login.js?v=20261120-roles"></script>
+</body>
+</html>

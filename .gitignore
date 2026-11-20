@@ -20,3 +20,6 @@ COURSE/*
 
 caddy_data/
 caddy_config/
+
+# База пользователей, групп и привязки курсов.
+data/

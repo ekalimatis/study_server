@@ -15,10 +15,14 @@
     const expandBtn = document.getElementById('expandBtn');
     const mobileMenuBtn = document.getElementById('mobileMenuBtn');
     const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+    const accountUser = document.getElementById('accountUser');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const adminLink = document.getElementById('adminLink');
     const mobileQuery = window.matchMedia
         ? window.matchMedia('(max-width: 768px)')
         : { matches: window.innerWidth <= 768 };
 
+    let identity = null;
     let currentCourse = null;
     let currentDay = null;
     let currentTab = null; // 'plan' | 'theory' | 'practice' | 'materials'
@@ -28,6 +32,48 @@
 
     function isMobileViewport() {
         return mobileQuery.matches;
+    }
+
+    function redirectToLogin() {
+        const next = window.location.pathname + window.location.search;
+        window.location.replace('/login?next=' + encodeURIComponent(next));
+    }
+
+    function updateAccountUi() {
+        if (!identity) return;
+        const roleLabels = {
+            chief: 'Главный администратор',
+            admin: 'Администратор',
+            user: 'Пользователь'
+        };
+        const groupName = identity.group && identity.group.name ? ' · ' + identity.group.name : '';
+        if (accountUser) {
+            accountUser.textContent = identity.username + ' · ' + (roleLabels[identity.role] || identity.role) + groupName;
+        }
+        if (adminLink) {
+            adminLink.style.display = identity.role === 'user' ? 'none' : '';
+        }
+    }
+
+    async function loadSession() {
+        const response = await fetch('/api/session', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Не удалось проверить сессию');
+        const data = await response.json();
+        if (!data.authenticated) {
+            redirectToLogin();
+            throw new Error('redirect');
+        }
+        identity = data;
+        updateAccountUi();
+    }
+
+    async function logout() {
+        try {
+            await fetch('/api/logout', { method: 'POST' });
+        } catch (error) {
+            /* ignore */
+        }
+        window.location.replace('/login');
     }
 
     function openSidebar(focus) {
@@ -585,6 +631,10 @@
         courseListEl.innerHTML = '<div style="padding:1rem; text-align:center; color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> Загрузка...</div>';
         fetch('/api/courses')
             .then(res => {
+                if (res.status === 401) {
+                    redirectToLogin();
+                    throw new Error('redirect');
+                }
                 if (!res.ok) throw new Error('Ошибка загрузки списка курсов');
                 return res.json();
             })
@@ -597,6 +647,7 @@
                 }
             })
             .catch(err => {
+                if (err.message === 'redirect') return;
                 courseListEl.innerHTML = `<div style="padding:1rem; text-align:center; color:#dc2626;">
                     <i class="fas fa-exclamation-triangle"></i> Ошибка: ${err.message}
                     <br><small>Убедитесь, что сервер запущен.</small>
@@ -802,7 +853,8 @@
                         practiceHtml += `<div class="progress-container"><div class="progress-bar" id="practiceProgressBar" style="width: 0%;">0%</div></div>`;
                         practiceHtml += `</div>`;
                         practiceHtml += `<div id="practiceSteps">`;
-                        const storageKey = `practice_${courseId}_day${day}`;
+                        const userKey = identity && identity.user_id != null ? 'u' + identity.user_id : 'chief';
+                        const storageKey = `practice_${userKey}_${courseId}_day${day}`;
                         let savedStates = [];
                         try {
                             const saved = localStorage.getItem(storageKey);
@@ -963,6 +1015,8 @@
         mobileQuery.addListener(handleMobileQueryChange);
     }
 
+    if (logoutBtn) logoutBtn.addEventListener('click', logout);
+
     // --- Переключение темы ---
     const themeToggle = document.getElementById('themeToggle');
     function applyTheme(dark) {
@@ -1020,7 +1074,12 @@
     });
 
     // --- Инициализация ---
-    loadCourses();
+    loadSession().then(loadCourses).catch(function (error) {
+        if (error.message === 'redirect') return;
+        courseListEl.innerHTML = `<div style="padding:1rem; text-align:center; color:#dc2626;">
+            <i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}
+        </div>`;
+    });
 
     console.log('🚀 Универсальный клиент загружен (quiz v2).');
 })();

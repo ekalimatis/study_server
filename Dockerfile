@@ -8,9 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN addgroup --system app && adduser --system --ingroup app --no-create-home app
-RUN mkdir -p /app/logs && chown app:app /app/logs
+RUN mkdir -p /app/logs /app/data && chown app:app /app/logs /app/data
 
-COPY --chown=app:app server.py index.html app.js styles.css admin.html admin.js admin.css system_prompt.txt ./
+COPY --chown=app:app server.py accounts.py index.html app.js styles.css admin.html admin.js admin.css login.html login.js system_prompt.txt ./
 COPY --chown=app:app COURSE ./COURSE
 
 USER app

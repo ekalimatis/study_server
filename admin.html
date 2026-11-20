@@ -5,35 +5,78 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>Админ-режим — Учебный сервер</title>
-    <link rel="stylesheet" href="/styles.css?v=20261113-mobile">
-    <link rel="stylesheet" href="/admin.css?v=20261113-mobile">
+    <link rel="stylesheet" href="/styles.css?v=20261120-roles">
+    <link rel="stylesheet" href="/admin.css?v=20261120-roles">
 </head>
 <body class="admin-body">
 <div class="admin-shell">
     <header class="admin-header">
         <div>
             <h1>Админ-режим</h1>
-            <p class="admin-muted">Создание и изменение курсов через диалог с моделью</p>
+            <p class="admin-muted" id="adminSubtitle">Создание и изменение курсов через диалог с моделью</p>
+            <p class="admin-muted admin-identity" id="adminIdentity"></p>
         </div>
         <div class="admin-header-actions">
             <a href="/" class="admin-link">К курсам</a>
-            <button id="logoutBtn" type="button" class="admin-btn hidden">Выйти</button>
+            <button id="logoutBtn" type="button" class="admin-btn">Выйти</button>
         </div>
     </header>
 
-    <section id="loginView" class="admin-card admin-login">
-        <h2>Вход</h2>
-        <p class="admin-muted">Введите пароль администратора. Пароль проверяется на сервере.</p>
-        <form id="loginForm" class="admin-form">
-            <label class="admin-label">Пароль
-                <input id="passwordInput" type="password" class="admin-input" autocomplete="current-password" required>
-            </label>
-            <button type="submit" class="admin-btn primary">Войти</button>
-            <div id="loginStatus" class="admin-status"></div>
-        </form>
-    </section>
-
     <section id="adminView" class="hidden">
+        <section class="admin-card admin-manage-card">
+            <details id="manageBlock" class="admin-settings admin-manage">
+                <summary id="manageSummary">Группы и пользователи</summary>
+
+                <form id="chiefGroupFormWrap" class="admin-form admin-inline-form hidden">
+                    <h3>Новая группа и администратор</h3>
+                    <div class="admin-inline-grid">
+                        <label class="admin-label">Название группы
+                            <input id="groupNameInput" class="admin-input" maxlength="100" placeholder="Например, группа 101">
+                        </label>
+                        <label class="admin-label">Логин администратора
+                            <input id="groupAdminLogin" class="admin-input" autocomplete="off" spellcheck="false" maxlength="32">
+                        </label>
+                        <label class="admin-label">Пароль администратора
+                            <input id="groupAdminPassword" type="password" class="admin-input" autocomplete="new-password" minlength="8">
+                        </label>
+                        <button id="createGroupBtn" type="submit" class="admin-btn primary">Создать группу</button>
+                    </div>
+                    <div id="groupStatus" class="admin-status" aria-live="polite"></div>
+                </form>
+
+                <div id="groupsSection">
+                    <div class="admin-manage-head">
+                        <h3>Группы</h3>
+                        <button id="refreshGroupsBtn" type="button" class="admin-btn mini">Обновить</button>
+                    </div>
+                    <div id="groupsList" class="admin-groups"></div>
+                </div>
+
+                <div class="admin-manage-head">
+                    <h3>Пользователи</h3>
+                    <button id="refreshUsersBtn" type="button" class="admin-btn mini">Обновить</button>
+                </div>
+                <div id="usersList" class="admin-users"></div>
+
+                <form id="createUserForm" class="admin-form admin-inline-form">
+                    <h3>Новый пользователь</h3>
+                    <div class="admin-inline-grid">
+                        <label class="admin-label">Логин
+                            <input id="userUsernameInput" class="admin-input" autocomplete="off" spellcheck="false" maxlength="32">
+                        </label>
+                        <label class="admin-label">Пароль
+                            <input id="userPasswordInput" type="password" class="admin-input" autocomplete="new-password" minlength="8">
+                        </label>
+                        <label id="userGroupWrap" class="admin-label">Группа
+                            <select id="userGroupSelect" class="admin-input"></select>
+                        </label>
+                        <button type="submit" class="admin-btn primary">Добавить пользователя</button>
+                    </div>
+                    <div id="userStatus" class="admin-status" aria-live="polite"></div>
+                </form>
+            </details>
+        </section>
+
         <div class="admin-grid">
             <aside class="admin-card admin-sidebar">
                 <div class="admin-sidebar-head">
@@ -42,6 +85,11 @@
                 </div>
                 <div id="courseList" class="admin-course-list"></div>
                 <div class="admin-context">
+                    <label id="contextGroupWrap" class="admin-label">Группа
+                        <select id="contextGroup" class="admin-input">
+                            <option value="">Без группы</option>
+                        </select>
+                    </label>
                     <label class="admin-label">Контекст курса
                         <select id="contextCourse" class="admin-input">
                             <option value="">Не указан</option>
@@ -50,6 +98,10 @@
                     <label class="admin-label">День (необязательно)
                         <input id="contextDay" type="number" min="1" max="365" class="admin-input" placeholder="например 1">
                     </label>
+                    <div id="assignCourseWrap" class="admin-row hidden">
+                        <button id="assignCourseBtn" type="button" class="admin-btn mini">Привязать курс к группе</button>
+                        <span id="assignStatus" class="admin-status"></span>
+                    </div>
                 </div>
             </aside>
 
@@ -128,6 +180,6 @@
         </div>
     </section>
 </div>
-<script src="/admin.js"></script>
+<script src="/admin.js?v=20261120-roles"></script>
 </body>
 </html>
