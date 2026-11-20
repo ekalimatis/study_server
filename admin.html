@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>Админ-режим — Учебный сервер</title>
     <link rel="stylesheet" href="/styles.css?v=20261120-roles">
-    <link rel="stylesheet" href="/admin.css?v=20261120-roles">
+    <link rel="stylesheet" href="/admin.css?v=20261120-roles-guide2">
 </head>
 <body class="admin-body">
 <div class="admin-shell">
@@ -23,6 +23,37 @@
     </header>
 
     <section id="adminView" class="hidden">
+        <section class="admin-card admin-intro">
+            <h2 id="adminIntroTitle">Администратор</h2>
+            <p class="admin-muted" id="adminIntroText"></p>
+
+            <details class="admin-guide" open>
+                <summary>Как создавать и изменять курсы</summary>
+                <div class="admin-guide-grid">
+                    <section class="admin-guide-block">
+                        <h3>Порядок работы</h3>
+                        <ol>
+                            <li>Выберите курс в контексте. Главный администратор также выбирает группу; для нового курса поле курса можно оставить пустым.</li>
+                            <li>Опишите задачу в диалоге: тема, аудитория, количество дней, что именно создать или изменить. Курс можно создать сразу с несколькими днями или добавлять дни по одному.</li>
+                            <li>Проверьте предпросмотр: сервер покажет план курса, теорию и практику до сохранения.</li>
+                            <li>Нажмите «Применить» у нужного изменения или «Применить все». Изменения сразу появятся в курсе.</li>
+                        </ol>
+                    </section>
+
+                    <section class="admin-guide-block">
+                        <h3>Ограничения</h3>
+                        <ul>
+                            <li>Курс принадлежит одной группе. Администратор работает только с курсами своей группы.</li>
+                            <li>Курс без группы виден только главному администратору.</li>
+                            <li>Удаление курсов и учебных дней не поддерживается.</li>
+                            <li>Заголовки дней в плане курса обновляются автоматически.</li>
+                            <li>Изменения становятся доступны пользователям группы сразу после применения.</li>
+                        </ul>
+                    </section>
+                </div>
+            </details>
+        </section>
+
         <section class="admin-card admin-manage-card">
             <details id="manageBlock" class="admin-settings admin-manage">
                 <summary id="manageSummary">Группы и пользователи</summary>
@@ -180,6 +211,6 @@
         </div>
     </section>
 </div>
-<script src="/admin.js?v=20261120-roles"></script>
+    <script src="/admin.js?v=20261120-roles-guide"></script>
 </body>
 </html>

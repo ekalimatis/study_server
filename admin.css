@@ -436,6 +436,69 @@ body.admin-body {
     font-size: 0.85rem;
 }
 
+.admin-intro {
+    margin-bottom: 1.25rem;
+}
+
+.admin-intro h2 {
+    margin-bottom: 0.4rem;
+}
+
+.admin-intro p {
+    max-width: 100ch;
+}
+
+.admin-guide {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+}
+
+.admin-guide summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--text-heading);
+}
+
+.admin-guide-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+    margin-top: 0.9rem;
+}
+
+.admin-guide-block {
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.9rem;
+    background: var(--surface);
+}
+
+.admin-guide-block h3 {
+    font-size: 0.98rem;
+    color: var(--text-heading);
+    margin-bottom: 0.5rem;
+}
+
+.admin-guide-block ul,
+.admin-guide-block ol {
+    display: grid;
+    gap: 0.4rem;
+    margin-left: 1.15rem;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+.admin-guide-block code {
+    padding: 0.1rem 0.3rem;
+    border-radius: 0.25rem;
+    background: var(--surface-alt);
+    color: var(--text-heading);
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+}
+
 .admin-manage-card {
     margin-bottom: 1.25rem;
 }
@@ -576,6 +639,10 @@ body.admin-body {
     }
 
     .admin-inline-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-guide-grid {
         grid-template-columns: minmax(0, 1fr);
     }
 

@@ -29,6 +29,8 @@
     const logoutBtn = document.getElementById('logoutBtn');
     const adminIdentity = document.getElementById('adminIdentity');
     const adminSubtitle = document.getElementById('adminSubtitle');
+    const adminIntroTitle = document.getElementById('adminIntroTitle');
+    const adminIntroText = document.getElementById('adminIntroText');
 
     const manageBlock = document.getElementById('manageBlock');
     const manageSummary = document.getElementById('manageSummary');
@@ -153,6 +155,14 @@
             adminSubtitle.textContent = isChief()
                 ? 'Все группы, курсы и пользователи'
                 : 'Группа: ' + (groupName || 'не назначена');
+        }
+        if (adminIntroTitle) {
+            adminIntroTitle.textContent = isChief() ? 'Главный администратор' : 'Администратор группы';
+        }
+        if (adminIntroText) {
+            adminIntroText.textContent = isChief()
+                ? 'Вам доступны все группы, курсы и пользователи. Создавайте группы вместе с администраторами, добавляйте пользователей и привязывайте курсы к группам. Курсы без группы видит только главный администратор. Для работы выберите группу и курс в контексте.'
+                : 'Вы управляете курсами и пользователями своей группы. Создавайте и изменяйте учебные материалы в диалоге с моделью, проверяйте изменения в предпросмотре и применяйте их. Пользователи группы видят только её курсы. Для работы выберите курс в контексте.';
         }
         if (manageSummary) {
             manageSummary.textContent = isChief() ? 'Группы и пользователи' : 'Пользователи группы';
