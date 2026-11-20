@@ -4,25 +4,14 @@
     const SETTINGS_KEY = 'studyAdminModelSettings';
     const THEME_KEY = 'theme';
 
-    const DEFAULT_SYSTEM_PROMPT = 'Ты — старший методист и технический автор учебных курсов для учебного сервера. ' +
-        'Создавай и изменяй курсы и учебные дни в формате, который принимает сервер. ' +
-        'Не выполняй посторонние задачи.';
-
-    const LEGACY_SYSTEM_PROMPTS = [
-        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями. Не выполняй посторонние задачи.',
-        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями.Не выполняй посторонние задачи.',
-        'Ты — методист и автор учебных курсов для учебного сервера. Помогай администратору создавать и изменять курсы и учебные дни. Пиши материалы на русском языке, структурированно, с примерами и практическими заданиями.'
-    ];
-
     const DEFAULTS = {
-        provider: 'ollama',
-        base_url: 'http://127.0.0.1:11434',
-        model: 'llama3.1',
+        provider: 'openai',
+        base_url: 'https://routerai.ru/api/v1',
+        model: '',
         api_key: '',
         temperature: 0.2,
         top_p: 0.9,
-        num_ctx: 8192,
-        system_prompt: DEFAULT_SYSTEM_PROMPT
+        num_ctx: 131072
     };
 
     const adminView = document.getElementById('adminView');
@@ -62,14 +51,12 @@
     const assignCourseBtn = document.getElementById('assignCourseBtn');
     const assignStatus = document.getElementById('assignStatus');
 
-    const cfgProvider = document.getElementById('cfgProvider');
     const cfgBaseUrl = document.getElementById('cfgBaseUrl');
     const cfgModel = document.getElementById('cfgModel');
     const cfgApiKey = document.getElementById('cfgApiKey');
     const cfgTemperature = document.getElementById('cfgTemperature');
     const cfgTopP = document.getElementById('cfgTopP');
     const cfgNumCtx = document.getElementById('cfgNumCtx');
-    const cfgSystemPrompt = document.getElementById('cfgSystemPrompt');
     const modelOptions = document.getElementById('modelOptions');
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     const testConnectionBtn = document.getElementById('testConnectionBtn');
@@ -207,26 +194,8 @@
         return data || {};
     }
 
-    async function loadDefaultSystemPrompt() {
-        try {
-            const response = await fetch('/system_prompt.txt?ts=' + Date.now(), { cache: 'no-store' });
-            if (!response.ok) return null;
-            const text = await response.text();
-            const prompt = text.replace(/^\uFEFF/, '').trim();
-            return prompt || null;
-        } catch (error) {
-            return null;
-        }
-    }
-
-    function loadSettings(defaultPrompt) {
-        const promptDefault = defaultPrompt === undefined
-            ? DEFAULTS.system_prompt
-            : (typeof defaultPrompt === 'string' ? defaultPrompt : '');
-        const defaults = Object.assign({}, DEFAULTS, {
-            system_prompt: promptDefault
-        });
-        let settings = Object.assign({}, defaults);
+    function loadSettings() {
+        let settings = Object.assign({}, DEFAULTS);
         try {
             const raw = localStorage.getItem(SETTINGS_KEY);
             if (raw) {
@@ -236,33 +205,45 @@
                 }
             }
         } catch (error) {
-            settings = Object.assign({}, defaults);
+            settings = Object.assign({}, DEFAULTS);
         }
-        cfgProvider.value = settings.provider === 'openai' ? 'openai' : 'ollama';
-        cfgBaseUrl.value = settings.base_url || defaults.base_url;
-        cfgModel.value = settings.model || defaults.model;
+
+        delete settings.system_prompt;
+        const legacyOllama = settings.base_url === 'http://127.0.0.1:11434' || settings.provider === 'ollama';
+        settings.provider = 'openai';
+        if (legacyOllama) {
+            settings.base_url = DEFAULTS.base_url;
+            if (!settings.model || settings.model === 'llama3.1') {
+                settings.model = '';
+            }
+        }
+        if (settings.num_ctx == null || Number(settings.num_ctx) === 8192) {
+            settings.num_ctx = DEFAULTS.num_ctx;
+        }
+
+        cfgBaseUrl.value = settings.base_url || DEFAULTS.base_url;
+        cfgModel.value = settings.model || DEFAULTS.model;
         cfgApiKey.value = settings.api_key || '';
-        cfgTemperature.value = settings.temperature != null ? settings.temperature : defaults.temperature;
-        cfgTopP.value = settings.top_p != null ? settings.top_p : defaults.top_p;
-        cfgNumCtx.value = settings.num_ctx != null ? settings.num_ctx : defaults.num_ctx;
-        const savedPrompt = typeof settings.system_prompt === 'string' ? settings.system_prompt.trim() : '';
-        if (!savedPrompt || LEGACY_SYSTEM_PROMPTS.indexOf(savedPrompt) !== -1) {
-            settings.system_prompt = defaults.system_prompt;
+        cfgTemperature.value = settings.temperature != null ? settings.temperature : DEFAULTS.temperature;
+        cfgTopP.value = settings.top_p != null ? settings.top_p : DEFAULTS.top_p;
+        cfgNumCtx.value = settings.num_ctx != null ? settings.num_ctx : DEFAULTS.num_ctx;
+
+        try {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        } catch (error) {
+            /* localStorage может быть недоступен */
         }
-        cfgSystemPrompt.value = settings.system_prompt;
-        updateProviderUi();
     }
 
     function collectSettings() {
         return {
-            provider: cfgProvider.value === 'openai' ? 'openai' : 'ollama',
+            provider: 'openai',
             base_url: cfgBaseUrl.value.trim(),
             model: cfgModel.value.trim(),
-            api_key: cfgProvider.value === 'openai' ? cfgApiKey.value : '',
+            api_key: cfgApiKey.value,
             temperature: toNumber(cfgTemperature.value, DEFAULTS.temperature),
             top_p: toNumber(cfgTopP.value, DEFAULTS.top_p),
-            num_ctx: toInteger(cfgNumCtx.value, DEFAULTS.num_ctx),
-            system_prompt: cfgSystemPrompt.value
+            num_ctx: toInteger(cfgNumCtx.value, DEFAULTS.num_ctx)
         };
     }
 
@@ -277,15 +258,6 @@
             setStatus(settingsStatus, 'Не удалось сохранить настройки в браузере: ' + error.message, 'err');
             return false;
         }
-    }
-
-    function updateProviderUi() {
-        const isOpenai = cfgProvider.value === 'openai';
-        cfgBaseUrl.placeholder = isOpenai ? 'https://routerai.ru/api/v1' : 'http://127.0.0.1:11434';
-        cfgApiKey.disabled = !isOpenai;
-        cfgApiKey.title = isOpenai
-            ? 'Ключ хранится в браузере и передаётся только вместе с запросом'
-            : 'Для Ollama ключ не требуется';
     }
 
     function onSaveSettings() {
@@ -958,7 +930,6 @@
     refreshCoursesBtn.addEventListener('click', loadCourses);
     saveSettingsBtn.addEventListener('click', onSaveSettings);
     testConnectionBtn.addEventListener('click', onTestConnection);
-    cfgProvider.addEventListener('change', updateProviderUi);
     chatForm.addEventListener('submit', onSend);
     chatInput.addEventListener('keydown', function (event) {
         if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -984,8 +955,7 @@
 
     async function init() {
         applyTheme();
-        const defaultPrompt = await loadDefaultSystemPrompt();
-        loadSettings(defaultPrompt);
+        loadSettings();
         await checkSession();
     }
 

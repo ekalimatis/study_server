@@ -149,6 +149,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config['top_p'], 0)
         self.assertEqual(config['num_ctx'], 256)
 
+    def test_default_num_ctx_is_maximum(self):
+        config = server.normalize_target_config({
+            'provider': 'openai',
+            'base_url': 'https://routerai.ru/api/v1',
+            'model': 'test-model',
+        })
+        self.assertEqual(config['num_ctx'], 131072)
+
     def test_messages_require_last_user(self):
         with self.assertRaises(server.ValidationError):
             server.normalize_messages([{'role': 'assistant', 'content': 'ответ'}])
@@ -236,6 +244,116 @@ class ContextTests(unittest.TestCase):
         self.assertIn('Текущий контекст: курс: KAFKA, день: 2', system_prompt)
         self.assertIn('[Контекст: курс: KAFKA, день: 2]', user_message)
         self.assertIn('Создай день', user_message)
+
+
+class ContextSnapshotTests(unittest.TestCase):
+    def test_includes_course_and_day_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            course_path = os.path.join(temp_dir, 'EN_BASICS')
+            os.makedirs(course_path)
+            with open(os.path.join(course_path, 'main.md'), 'w', encoding='utf-8') as file:
+                file.write('# English\n\n## План курса\n\n### День 1. Знакомство\n')
+            with open(os.path.join(course_path, 'day1_theory.md'), 'w', encoding='utf-8') as file:
+                file.write('# Теория дня 1\n\nГлагол to be.\n')
+            with open(os.path.join(course_path, 'day1_practice.md'), 'w', encoding='utf-8') as file:
+                file.write('# Практика дня 1\n\n## Шаг 1. Знакомство\n')
+
+            original = server.COURSE_DIR
+            server.COURSE_DIR = temp_dir
+            try:
+                snapshot = server.build_context_snapshot({'course_id': 'EN_BASICS', 'day': 1})
+            finally:
+                server.COURSE_DIR = original
+
+        self.assertIn('ТЕКУЩЕЕ СОСТОЯНИЕ', snapshot)
+        self.assertIn('=== main.md (описание курса) ===', snapshot)
+        self.assertIn('# English', snapshot)
+        self.assertIn('=== day1_theory.md (теория дня 1) ===', snapshot)
+        self.assertIn('Глагол to be.', snapshot)
+        self.assertIn('=== day1_practice.md (практика дня 1) ===', snapshot)
+
+    def test_marks_missing_day_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            course_path = os.path.join(temp_dir, 'EN_BASICS')
+            os.makedirs(course_path)
+            with open(os.path.join(course_path, 'main.md'), 'w', encoding='utf-8') as file:
+                file.write('# English\n')
+
+            original = server.COURSE_DIR
+            server.COURSE_DIR = temp_dir
+            try:
+                snapshot = server.build_context_snapshot({'course_id': 'EN_BASICS', 'day': 2})
+            finally:
+                server.COURSE_DIR = original
+
+        self.assertIn('day2_theory.md', snapshot)
+        self.assertIn('[файл отсутствует]', snapshot)
+        self.assertIn('day2_practice.md', snapshot)
+
+    def test_marks_truncated_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            course_path = os.path.join(temp_dir, 'EN_BASICS')
+            os.makedirs(course_path)
+            with open(os.path.join(course_path, 'main.md'), 'w', encoding='utf-8') as file:
+                file.write('# English\n' + ('x' * 2000))
+
+            original = server.COURSE_DIR
+            server.COURSE_DIR = temp_dir
+            try:
+                snapshot = server.build_context_snapshot({'course_id': 'EN_BASICS'}, max_total=1200)
+            finally:
+                server.COURSE_DIR = original
+
+        self.assertIn('[Файл сокращён:', snapshot)
+
+    def test_without_course_context_is_empty(self):
+        self.assertEqual(server.build_context_snapshot({}), '')
+
+    def test_target_model_receives_current_files(self):
+        captured = {}
+        original_chat = server.call_openai_chat
+        original_dir = server.COURSE_DIR
+
+        def fake(base_url, api_key, model, messages, temperature, top_p, max_tokens, timeout, json_mode=False):
+            captured['messages'] = messages
+            return '{"reply":"ok","changes":[]}', None, 'stop'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            course_path = os.path.join(temp_dir, 'EN_BASICS')
+            os.makedirs(course_path)
+            with open(os.path.join(course_path, 'main.md'), 'w', encoding='utf-8') as file:
+                file.write('# English\n\n## План курса\n\n### День 1. Знакомство\n')
+            with open(os.path.join(course_path, 'day1_theory.md'), 'w', encoding='utf-8') as file:
+                file.write('# Теория дня 1\n\nГлагол to be.\n')
+            with open(os.path.join(course_path, 'day1_practice.md'), 'w', encoding='utf-8') as file:
+                file.write('# Практика дня 1\n\n## Шаг 1. Знакомство\n')
+
+            server.COURSE_DIR = temp_dir
+            server.call_openai_chat = fake
+            try:
+                config = server.normalize_target_config({
+                    'provider': 'openai',
+                    'base_url': 'http://127.0.0.1:1/v1',
+                    'model': 'm',
+                    'api_key': '',
+                    'temperature': 0.2,
+                    'top_p': 0.9,
+                    'num_ctx': 1000,
+                })
+                server.call_target_model(
+                    config,
+                    [{'role': 'user', 'content': 'Исправь день 1'}],
+                    {'course_id': 'EN_BASICS', 'day': 1},
+                )
+            finally:
+                server.COURSE_DIR = original_dir
+                server.call_openai_chat = original_chat
+
+        system_prompt = captured['messages'][0]['content']
+        self.assertIn('=== main.md (описание курса) ===', system_prompt)
+        self.assertIn('=== day1_theory.md (теория дня 1) ===', system_prompt)
+        self.assertIn('Глагол to be.', system_prompt)
+        self.assertIn('=== day1_practice.md (практика дня 1) ===', system_prompt)
 
 
 class SystemPromptTests(unittest.TestCase):

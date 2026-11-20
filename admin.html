@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>Админ-режим — Учебный сервер</title>
     <link rel="stylesheet" href="/styles.css?v=20261120-roles">
-    <link rel="stylesheet" href="/admin.css?v=20261120-roles-guide2">
+    <link rel="stylesheet" href="/admin.css?v=20261120-roles-guide3">
 </head>
 <body class="admin-body">
 <div class="admin-shell">
@@ -33,7 +33,7 @@
                     <section class="admin-guide-block">
                         <h3>Порядок работы</h3>
                         <ol>
-                            <li>Выберите курс в контексте. Главный администратор также выбирает группу; для нового курса поле курса можно оставить пустым.</li>
+                            <li>Выберите курс и день в контексте. Сервер передаст модели текущее описание курса, теорию и практику выбранного дня. Главный администратор также выбирает группу; для нового курса поле курса можно оставить пустым.</li>
                             <li>Опишите задачу в диалоге: тема, аудитория, количество дней, что именно создать или изменить. Курс можно создать сразу с несколькими днями или добавлять дни по одному.</li>
                             <li>Проверьте предпросмотр: сервер покажет план курса, теорию и практику до сохранения.</li>
                             <li>Нажмите «Применить» у нужного изменения или «Применить все». Изменения сразу появятся в курсе.</li>
@@ -128,6 +128,7 @@
                     </label>
                     <label class="admin-label">День (необязательно)
                         <input id="contextDay" type="number" min="1" max="365" class="admin-input" placeholder="например 1">
+                        <small class="admin-hint">Если указать день, модель получит текущие теорию и практику этого дня.</small>
                     </label>
                     <div id="assignCourseWrap" class="admin-row hidden">
                         <button id="assignCourseBtn" type="button" class="admin-btn mini">Привязать курс к группе</button>
@@ -142,24 +143,18 @@
                         <summary>Настройки доступа к модели</summary>
                         <p class="admin-muted">
                             Настройки хранятся только в этом браузере (localStorage) и не сохраняются на сервере.
-                            Они передаются на сервер в каждом запросе. Системный промпт по умолчанию
-                            загружается из <code>system_prompt.txt</code>.
+                            Они передаются на сервер в каждом запросе. Поддерживается OpenAI-совместимый API.
+                            Системный промпт задаётся на сервере.
                         </p>
                         <div class="admin-settings-grid">
-                            <label class="admin-label">Провайдер
-                                <select id="cfgProvider" class="admin-input">
-                                    <option value="ollama">Ollama (локальная)</option>
-                                    <option value="openai">OpenAI-совместимый API</option>
-                                </select>
-                            </label>
                             <label class="admin-label">Base URL
-                                <input id="cfgBaseUrl" class="admin-input" placeholder="http://127.0.0.1:11434">
+                                <input id="cfgBaseUrl" class="admin-input" placeholder="https://routerai.ru/api/v1">
                             </label>
                             <label class="admin-label">Модель
-                                <input id="cfgModel" class="admin-input" list="modelOptions" placeholder="llama3.1">
+                                <input id="cfgModel" class="admin-input" list="modelOptions" placeholder="например deepseek/deepseek-v4-pro">
                                 <datalist id="modelOptions"></datalist>
                             </label>
-                            <label class="admin-label">API-ключ (необязательно)
+                            <label class="admin-label">API-ключ
                                 <input id="cfgApiKey" type="password" class="admin-input" autocomplete="off" placeholder="хранится в браузере">
                             </label>
                             <label class="admin-label">Temperature (0–2)
@@ -168,11 +163,9 @@
                             <label class="admin-label">Top-p (0–1)
                                 <input id="cfgTopP" type="number" min="0" max="1" step="0.05" class="admin-input">
                             </label>
-                            <label class="admin-label">num_ctx / max_tokens
-                                <input id="cfgNumCtx" type="number" min="256" max="131072" step="256" class="admin-input" title="Для Ollama — размер контекста; для OpenAI-совместимого API — max_tokens. При обрыве ответа увеличьте значение.">
-                            </label>
-                            <label class="admin-label admin-wide">Системный промпт
-                                <textarea id="cfgSystemPrompt" class="admin-input admin-textarea" rows="6"></textarea>
+                            <label class="admin-label">Максимум токенов (max_tokens)
+                                <input id="cfgNumCtx" type="number" min="256" max="131072" step="256" class="admin-input" title="Лимит вывода модели. По умолчанию — максимум 131072.">
+                                <small class="admin-hint">По умолчанию — максимум 131072.</small>
                             </label>
                         </div>
                         <div class="admin-row">
@@ -211,6 +204,6 @@
         </div>
     </section>
 </div>
-    <script src="/admin.js?v=20261120-roles-guide"></script>
+    <script src="/admin.js?v=20261120-model-settings"></script>
 </body>
 </html>
